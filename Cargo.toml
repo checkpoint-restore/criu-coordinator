@@ -1,0 +1,27 @@
+[package]
+name = "criu-coordinator"
+version = "0.1.0"
+authors = ["Radostin Stoyanov <radostin.stoyanov@eng.ox.ac.uk>"]
+description = "Coordinates checkpointing and restore among CRIU processes in distributed applications."
+edition = "2018"
+license = "Apache-2.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+clap = { version = "4.1.11", features = ["derive"] }
+clap_complete = "4.1.5"
+log = { version = "0.4", features = ["std"] }
+json = "*"
+libc = "0.2"
+nix = "0.26.2"
+slab = "0.4.8"
+lazy_static = "1.4.0"
+serde = "1.0.159"
+bytes = "1.4.0"
+prost = "0.11.8"
+log-panics = { version = "2.1.0", features = ["with-backtrace"] }
+config = "0.13.1"
+
+[build-dependencies]
+prost-build = "0.11.8"

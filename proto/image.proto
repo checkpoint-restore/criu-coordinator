@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package image;
+
+message marker {
+    uint64 seq = 1;
+    oneof body {
+        string filename = 2;
+        uint32 file_data = 3;
+        bool file_eof = 4;
+        bool image_eof = 5;
+    }
+}
+
