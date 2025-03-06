@@ -17,6 +17,8 @@
  *
  */
 
+ /// This module is responsible for I/O monitoring of the stream file descriptors.
+
 use std::{
     os::fd::RawFd,
     io::Result,
@@ -30,10 +32,8 @@ use nix::{
     unistd::close, errno::Errno,
 };
 use crate::pipeline::protobuf::MB;
-use super::{criu::StreamConnection, unix_pipe::{UnixPipe, UnixPipeImpl}};
+use super::{criu::StreamConnection, unix_pipe::{UnixFile, UnixPipe}};
 
-
-/// This module is responsible for I/O monitoring of the stream file descriptors.
 
 /// CRIU has difficulties if the pipe size is bigger than 4MB.
 /// Note that the following pipe buffers are not actually using memory. The content of the pipe is
@@ -44,14 +44,14 @@ const CRIU_PIPE_DESIRED_CAPACITY: i32 = 4*MB as i32;
 /// ImageFile represents a CRIU image file.
 pub struct ImageFile {
     /// Incoming pipe from CRIU
-    pub pipe: UnixPipe,
+    pub pipe: UnixFile,
     /// Associated filename (e.g., "pages-3.img")
     pub filename: Rc<str>,
     /// Output file
     pub output_file: File,
 }
 impl ImageFile {
-    pub(crate) fn new(filename: String, mut pipe: UnixPipe, output_file: File) -> Self {
+    pub(crate) fn new(filename: String, mut pipe: UnixFile, output_file: File) -> Self {
         let _ = pipe.set_capacity(CRIU_PIPE_DESIRED_CAPACITY);
         let filename = Rc::from(filename);
         Self { pipe, filename, output_file }

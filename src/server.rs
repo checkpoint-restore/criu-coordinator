@@ -113,7 +113,7 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
         for (key, values) in client_deps.entries() {
             let mut dependencies_vector = Vec::new();
             for dependency in values.members() {
-                if dependency.to_string() != key.to_string() {
+                if dependency != key {
                     dependencies_vector.push(dependency.to_string());
                 }
             }
@@ -135,15 +135,15 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
         return;
     }
 
-    let dependencies: Vec<&str>;
     let binding = client_deps.to_string();
     let container_dependencies_lock = container_dependencies.lock().unwrap();
-    if binding.is_empty() {
+
+    let dependencies: Vec<&str> = if binding.is_empty() {
         let dependencies_lock = container_dependencies_lock.get(&client_id).unwrap();
-        dependencies = dependencies_lock.iter().map(|x| x.as_str()).collect();
+        dependencies_lock.iter().map(|x| x.as_str()).collect()
     } else {
-       dependencies = binding.split(':').collect();
-    }
+        binding.split(':').collect()
+    };
 
     if client_action == "post-dump" {
         info!("[{client_id}] [==] Wait for all dependencies to create local checkpoint");
@@ -176,21 +176,7 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
         return;
     }
 
-    let get_response_message = || {
-        let mut response_message = "ACK";
-        let mut clients_lock = clients_set.lock().unwrap();
-
-        if clients_lock.is_empty() || !clients_lock.contains_key(&client_id) {
-            info!("[{}] [==] Insert client ID", client_id);
-            clients_lock.insert(client_id.to_string(), ClientStatus::new());
-        } else {
-            response_message = "client already connected";
-        }
-
-        response_message
-    };
-
-    response_message = get_response_message();
+    response_message = get_response_message(&client_id, clients_set);
 
     if response_message != "ACK" {
         // Send response message in case of an error.
@@ -315,8 +301,7 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
         }
     }
 
-    if response_message == "ACK" {
-        if client_action == "pre-stream" {
+    if response_message == "ACK" && client_action == "pre-stream" {
             let images_dir = "/tmp/server-images".to_string();
             create_dir_all(&images_dir).unwrap();
 
@@ -374,10 +359,21 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
             // FIXME: 7. Wait to receive the image files from all dependencies.
             // FIXME: 8. Send ACK to confirm that the image files from all checkpoints have been received.
         }
-    }
 
     // Close TCP connection with client
     client_close_connection(&client_id, client_action, tcp_stream, clients_set);
+}
+
+fn get_response_message(client_id: &str, clients_set: &Arc<Mutex<HashMap<String, ClientStatus>>>) -> &'static str {
+    let mut clients_lock = clients_set.lock().unwrap();
+
+    if clients_lock.is_empty() || !clients_lock.contains_key(client_id) {
+        info!("[{}] [==] Insert client ID", client_id);
+        clients_lock.insert(client_id.to_string(), ClientStatus::new());
+        return "ACK";
+    }
+
+    "client already connected"
 }
 
 

@@ -36,7 +36,7 @@ use crate::constants::IMG_STREAMER_CAPTURE_SOCKET_NAME;
 
 use super::{
     protobuf::pb_read_next,
-    unix_pipe::{UnixPipe, UnixPipeImpl}
+    unix_pipe::{UnixFile, UnixPipe}
 };
 
 pub struct StreamListener {
@@ -73,7 +73,7 @@ impl StreamConnection {
         Ok(pb_read_next(&mut self.socket)?.map(|(req, _): (ImgStreamerRequestEntry, _)| req.filename))
     }
 
-    pub fn recv_pipe(&mut self) -> Result<UnixPipe> {
+    pub fn recv_pipe(&mut self) -> Result<UnixFile> {
         UnixPipe::new(recv_fd(&mut self.socket)?)
     }
 }
