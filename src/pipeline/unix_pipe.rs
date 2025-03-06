@@ -37,19 +37,21 @@ lazy_static::lazy_static! {
 }
 
 
-pub type UnixPipe = fs::File;
+pub type UnixFile = fs::File;
 
-pub trait UnixPipeImpl: Sized {
+pub trait UnixPipe: Sized {
     fn new(fd: RawFd) -> Result<Self>;
     fn fionread(&self) -> Result<i32>;
     fn set_capacity(&mut self, capacity: i32) -> nix::Result<()>;
+    #[allow(dead_code)]
     fn increase_capacity(pipes: &mut [Self], max_capacity: i32) -> Result<i32>;
     fn splice_all(&mut self, dst: i32, len: usize) -> Result<()>;
+    #[allow(dead_code)]
     fn vmsplice_all(&mut self, data: &[u8]) -> Result<()>;
     fn drain_img_file(&mut self, output_file: &File) -> Result<(bool, i32)>;
 }
 
-impl UnixPipeImpl for UnixPipe {
+impl UnixPipe for UnixFile {
     fn new(fd: RawFd) -> Result<Self> {
         unsafe { Ok(fs::File::from_raw_fd(fd)) }
     }

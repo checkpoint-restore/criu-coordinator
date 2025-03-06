@@ -42,7 +42,7 @@ use super::{
     criu::StreamListener,
     monitor::{Monitor, MonitorType, ImageFile},
 };
-use crate::pipeline::unix_pipe::UnixPipeImpl;
+use crate::pipeline::unix_pipe::UnixPipe;
 
 const BUFFER_SIZE: usize = 32768 * 4;
 

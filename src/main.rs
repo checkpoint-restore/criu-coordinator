@@ -51,7 +51,8 @@ const CONFIG_KEY_ADDR: &str = "address";
 const CONFIG_KEY_PORT: &str = "port";
 const CONFIG_KEY_LOG: &str = "log-file";
 
-fn load_config_file(images_dir: &PathBuf) -> ClientConfig {
+fn load_config_file<P: AsRef<Path>>(images_dir: P) -> ClientConfig {
+    let images_dir = images_dir.as_ref();
     let mut config_file = images_dir.join(Path::new(CONFIG_FILE));
     if !config_file.is_file() {
         // The following allows us to load global config files from /etc/criu.
@@ -97,7 +98,7 @@ fn load_config_file(images_dir: &PathBuf) -> ClientConfig {
         address: address.to_string(),
         port: port.to_string(),
         id: id.to_string(),
-        dependencies: dependencies,
+        dependencies,
     }
 }
 
