@@ -17,19 +17,27 @@
  *
  */
 
+use json::object;
+use log::*;
 use std::io::{Read, Write};
-use std::net::{TcpStream, Shutdown};
+use std::net::{Shutdown, TcpStream};
 use std::path::Path;
 use std::process::exit;
 use std::str;
-use json::object;
-use log::*;
 
 use crate::pipeline::streamer::streamer;
 
 const BUFFER_SIZE: usize = 32768 * 4;
 
-pub fn run_client(address: &str, port: u16, id: &str, deps: &str, action: &str, images_dir: &Path, enable_streaming: bool) {
+pub fn run_client(
+    address: &str,
+    port: u16,
+    id: &str,
+    deps: &str,
+    action: &str,
+    images_dir: &Path,
+    enable_streaming: bool,
+) {
     let server_address = format!("{}:{}", address, port);
 
     info!("Connecting to {} using action {}", server_address, action);
@@ -37,7 +45,7 @@ pub fn run_client(address: &str, port: u16, id: &str, deps: &str, action: &str, 
         Ok(mut tcp_stream) => {
             info!("Connected to server at {}", server_address);
 
-            let cmd = object!{
+            let cmd = object! {
                 id: id,
                 action: action,
                 dependencies: deps,

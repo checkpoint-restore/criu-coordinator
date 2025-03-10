@@ -19,23 +19,27 @@
 
 mod cli;
 mod client;
-mod server;
 mod constants;
-mod pipeline;
 mod logger;
+mod pipeline;
+mod server;
 
-use constants::*;
 use config::Config;
+use constants::*;
 use std::collections::HashMap;
-use std::{env, path::PathBuf, process::exit, fs, os::unix::prelude::FileTypeExt};
-use std::path::Path;
+use std::{
+    env, fs,
+    os::unix::prelude::FileTypeExt,
+    path::{Path, PathBuf},
+    process::exit,
+};
 
 use clap::Parser;
 
-use cli::{Opts, Mode, DEFAULT_ADDRESS, DEFAULT_PORT};
+use cli::{Mode, Opts, DEFAULT_ADDRESS, DEFAULT_PORT};
 use client::run_client;
-use server::run_server;
 use logger::init_logger;
+use server::run_server;
 
 struct ClientConfig {
     log_file: String,
@@ -65,8 +69,13 @@ fn load_config_file<P: AsRef<Path>>(images_dir: P) -> ClientConfig {
         }
     }
 
-    let settings = Config::builder().add_source(config::File::from(config_file)).build().unwrap();
-    let settings_map = settings.try_deserialize::<HashMap<String, String>>().unwrap();
+    let settings = Config::builder()
+        .add_source(config::File::from(config_file))
+        .build()
+        .unwrap();
+    let settings_map = settings
+        .try_deserialize::<HashMap<String, String>>()
+        .unwrap();
 
     if !settings_map.contains_key(CONFIG_KEY_ID) {
         panic!("id missing in config file")
@@ -104,9 +113,10 @@ fn load_config_file<P: AsRef<Path>>(images_dir: P) -> ClientConfig {
 
 fn main() {
     if let Ok(action) = env::var(ENV_ACTION) {
-
-        let images_dir = PathBuf::from(env::var(ENV_IMAGE_DIR)
-            .unwrap_or_else(|_| panic!("Missing {} environment variable", ENV_IMAGE_DIR)));
+        let images_dir = PathBuf::from(
+            env::var(ENV_IMAGE_DIR)
+                .unwrap_or_else(|_| panic!("Missing {} environment variable", ENV_IMAGE_DIR)),
+        );
 
         let client_config = load_config_file(&images_dir);
 
@@ -117,17 +127,20 @@ fn main() {
                 match fs::symlink_metadata(images_dir.join(IMG_STREAMER_CAPTURE_SOCKET_NAME)) {
                     Ok(metadata) => {
                         if !metadata.file_type().is_socket() {
-                            panic!("{} exists but is not a Unix socket", IMG_STREAMER_CAPTURE_SOCKET_NAME);
+                            panic!(
+                                "{} exists but is not a Unix socket",
+                                IMG_STREAMER_CAPTURE_SOCKET_NAME
+                            );
                         }
                         // If the stream socket exists, ignore CRIU's "pre-dump" action hook.
                         exit(0);
-                    },
-                    Err(_) => false
+                    }
+                    Err(_) => false,
                 }
-            },
+            }
             ACTION_POST_DUMP => false,
             ACTION_PRE_RESTORE => false,
-            _ => exit(0)
+            _ => exit(0),
         };
 
         init_logger(Some(&images_dir), client_config.log_file);
@@ -139,7 +152,7 @@ fn main() {
             &client_config.dependencies,
             &action,
             &images_dir,
-            enable_streaming
+            enable_streaming,
         );
         exit(0);
     }
@@ -147,11 +160,32 @@ fn main() {
     let opts = Opts::parse();
 
     match opts.mode {
-        Mode::Client { address, port, id, deps, action, images_dir, stream, log_file} => {
+        Mode::Client {
+            address,
+            port,
+            id,
+            deps,
+            action,
+            images_dir,
+            stream,
+            log_file,
+        } => {
             init_logger(Some(&PathBuf::from(&images_dir)), log_file);
-            run_client(&address, port, &id, &deps, &action, &PathBuf::from(images_dir), stream);
-        },
-        Mode::Server { address, port , log_file} => {
+            run_client(
+                &address,
+                port,
+                &id,
+                &deps,
+                &action,
+                &PathBuf::from(images_dir),
+                stream,
+            );
+        }
+        Mode::Server {
+            address,
+            port,
+            log_file,
+        } => {
             init_logger(None, log_file);
             run_server(&address, port);
         }
