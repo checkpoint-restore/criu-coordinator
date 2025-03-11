@@ -17,18 +17,29 @@
  *
  */
 
+use crate::errors::{ClientError, ClientResult};
 use json::object;
 use log::*;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
 use std::path::Path;
-use std::process::exit;
 use std::str;
 
 use crate::pipeline::streamer::streamer;
 
 const BUFFER_SIZE: usize = 32768 * 4;
 
+/// Runs a client connection to the server
+///
+/// # Arguments
+///
+/// * `address` - Server address
+/// * `port` - Server port
+/// * `id` - Client identifier
+/// * `deps` - Dependencies string
+/// * `action` - Action to perform
+/// * `images_dir` - Directory for image files
+/// * `enable_streaming` - Whether to enable streaming
 pub fn run_client(
     address: &str,
     port: u16,
@@ -37,12 +48,13 @@ pub fn run_client(
     action: &str,
     images_dir: &Path,
     enable_streaming: bool,
-) {
+) -> ClientResult<()> {
     let server_address = format!("{}:{}", address, port);
-
     info!("Connecting to {} using action {}", server_address, action);
+
     match TcpStream::connect(&server_address) {
         Ok(mut tcp_stream) => {
+            //  Sends client information to the server
             info!("Connected to server at {}", server_address);
 
             let cmd = object! {
@@ -53,20 +65,26 @@ pub fn run_client(
 
             if let Err(e) = tcp_stream.write_all(cmd.dump().as_bytes()) {
                 error!("Failed to send ID: {}", e);
-                return;
+                return Err(ClientError::Connection(e));
             }
 
+            // Processes the server response
             let mut buffer = [0; BUFFER_SIZE];
             let response = match tcp_stream.read(&mut buffer) {
-                Ok(size) => str::from_utf8(&buffer[..size]).map_err(|e| e.to_string()),
-                Err(e) => Err(e.to_string()),
+                Ok(size) => str::from_utf8(&buffer[..size]).map_err(|e| {
+                    let error_msg = format!("Invalid UTF-8 in server response: {}", e);
+                    error!("{}", error_msg);
+                    ClientError::ResponseParse(error_msg)
+                }),
+                Err(e) => Err(ClientError::Connection(e)),
             };
 
             match response {
                 Ok(response_str) => {
                     info!("Server responded with: {}", response_str);
                     if response_str != "ACK" {
-                        exit(1);
+                        error!("Server didn't acknowledge the request: {}", response_str);
+                        return Err(ClientError::ServerError(response_str.to_string()));
                     }
                 }
                 Err(e) => {
@@ -74,16 +92,25 @@ pub fn run_client(
                 }
             }
 
+            // Streams data to/from server
             if enable_streaming {
-                streamer(&mut tcp_stream, images_dir).expect("Failed to start streamer");
+                streamer(&mut tcp_stream, images_dir).map_err(|e| {
+                    error!("Failed to stream images: {}", e);
+                    ClientError::StreamerError(e.to_string())
+                })?;
             }
 
+            // Shuts down the connection properly
             if let Err(e) = tcp_stream.shutdown(Shutdown::Both) {
                 error!("Failed to shutdown TCP connection: {}", e);
+                return Err(ClientError::Connection(e));
             }
+
+            Ok(())
         }
         Err(e) => {
-            error!("Failed to connect to the server: {}", e);
+            error!("Failed to connect to server: {}", e);
+            return Err(ClientError::Connection(e));
         }
     }
 }

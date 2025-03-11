@@ -32,6 +32,21 @@ pub enum LoggerError {
     LoggerInitError(String),
 }
 
+#[derive(Error, Debug)]
+pub enum ClientError {
+    #[error("Connection error: {0}")]
+    Connection(#[from] std::io::Error),
+
+    #[error("Failed to parse response: {0}")]
+    ResponseParse(String),
+
+    #[error("Server returned error response: {0}")]
+    ServerError(String),
+
+    #[error("Streamer error: {0}")]
+    StreamerError(String),
+}
+
 impl fmt::Display for AppError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -63,3 +78,4 @@ impl From<config::ConfigError> for AppError {
 /// Convenience type alias for function return types
 pub type AppResult<T> = Result<T, AppError>;
 pub type LoggerResult<T> = Result<T, LoggerError>;
+pub type ClientResult<T> = Result<T, ClientError>;
