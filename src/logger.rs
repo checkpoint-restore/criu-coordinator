@@ -17,11 +17,12 @@
  *
  */
 
-use std::fs::{File, self, OpenOptions};
-use std::os::unix::fs::OpenOptionsExt;
+use crate::errors::{LoggerError, LoggerResult};
+use log::{Level, LevelFilter, Metadata, Record};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
-use log::{Level, Metadata, Record, LevelFilter};
 
 pub struct Logger {
     log_file: Option<File>,
@@ -32,16 +33,31 @@ impl Logger {
         Box::new(Self { log_file: None })
     }
 
-    pub fn set_log_file(&mut self, filename: String) {
-        if filename == "-" {
+    pub fn set_log_file(&mut self, path: &Path) -> LoggerResult<()> {
+        if path.to_string_lossy() == "-" {
             self.log_file = None;
+            return Ok(());
+        }
+
+        let file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(path)
+            .map_err(|error| LoggerError::IoError(error))?;
+
+        self.log_file = Some(file);
+        Ok(())
+    }
+
+    fn write_log(&self, record: &Record) -> std::io::Result<()> {
+        if let Some(file) = &self.log_file {
+            let mut file = file;
+            writeln!(file, "{} - {}", record.level(), record.args())
         } else {
-            match OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(filename) {
-                    Ok(file) => {
-                        self.log_file = Some(file);
-                    }
-                    Err(error) => panic!("Opening log file: {:?}", error)
-                }
+            println!("{} - {}", record.level(), record.args());
+            Ok(())
         }
     }
 }
@@ -53,35 +69,35 @@ impl log::Log for Logger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            if self.log_file.is_some() {
-                if let Err(error) = writeln!(self.log_file.as_ref().unwrap(), "{} - {}", record.level(), record.args()) {
-                    eprintln!("Error writing to log file: {}", error);
-                }
-            } else {
-                println!("{} - {}", record.level(), record.args());
+            if let Err(error) = self.write_log(record) {
+                eprintln!("Error writing to log file: {}", error);
             }
         }
     }
     fn flush(&self) {}
 }
 
-pub fn init_logger(images_dir: Option<&Path>, filename: String) {
+pub fn init_logger(images_dir: Option<&Path>, filename: String) -> LoggerResult<()> {
     let mut main_logger = Logger::new();
     log_panics::init();
 
     match filename.as_str() {
-        "-" => {} // Do nothing
+        "-" => {
+            main_logger.set_log_file(Path::new("-"))?;
+        }
         _ if images_dir.is_none() || filename.starts_with('/') => {
-            main_logger.set_log_file(filename);
+            main_logger.set_log_file(Path::new(filename.as_str()))?;
         }
         _ => {
             let images_dir = images_dir.unwrap();
-            fs::create_dir_all(images_dir).unwrap_or_else(|_| panic!("Can't create images directory"));
+            fs::create_dir_all(images_dir)?;
             let full_path = images_dir.join(filename);
-            main_logger.set_log_file(full_path.into_os_string().into_string().unwrap());
+            main_logger.set_log_file(&full_path)?;
         }
     }
 
-    log::set_boxed_logger(main_logger).unwrap();
+    log::set_boxed_logger(main_logger).map_err(|e| LoggerError::LoggerInitError(e.to_string()))?;
     log::set_max_level(LevelFilter::Info);
+
+    Ok(())
 }

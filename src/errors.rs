@@ -1,4 +1,5 @@
 use std::{error::Error, fmt};
+use thiserror::Error;
 
 /// Custom error types for the application
 #[derive(Debug)]
@@ -15,6 +16,20 @@ pub enum AppError {
     SocketError(String),
     /// Standard I/O errors
     IoError(std::io::Error),
+    // Misc
+    Other(String),
+}
+
+#[derive(Debug, Error)]
+pub enum LoggerError {
+    #[error("IO Error: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("Path conversion error: {0}")]
+    PathConversion(String),
+
+    #[error("Logger initialization error: {0}")]
+    LoggerInitError(String),
 }
 
 impl fmt::Display for AppError {
@@ -26,6 +41,7 @@ impl fmt::Display for AppError {
             AppError::MissingEnvVar(msg) => write!(f, "Missing environment variable: {}", msg),
             AppError::SocketError(msg) => write!(f, "Socket error: {}", msg),
             AppError::IoError(e) => write!(f, "I/O error: {}", e),
+            AppError::Other(e) => write!(f, "Internal/Other error: {}", e),
         }
     }
 }
@@ -46,3 +62,4 @@ impl From<config::ConfigError> for AppError {
 
 /// Convenience type alias for function return types
 pub type AppResult<T> = Result<T, AppError>;
+pub type LoggerResult<T> = Result<T, LoggerError>;

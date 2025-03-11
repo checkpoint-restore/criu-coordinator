@@ -186,7 +186,8 @@ fn run_action_hook(action: &str) -> AppResult<()> {
     };
 
     // Initialize logger
-    init_logger(Some(&images_dir), client_config.log_file);
+    init_logger(Some(&images_dir), client_config.log_file)
+        .map_err(|e| AppError::Other(format!("LoggerError: {}", e)))?;
 
     // Parse port
     let port = client_config
@@ -227,7 +228,8 @@ fn run_cli_mode() -> AppResult<()> {
             let action_type = action.parse::<ActionType>().unwrap_or(ActionType::Other);
             let path_buf = PathBuf::from(&images_dir);
 
-            init_logger(Some(&path_buf), log_file);
+            init_logger(Some(&path_buf), log_file)
+                .map_err(|e| AppError::Other(format!("LoggerError: {}", e)))?;
 
             run_client(
                 &address,
@@ -244,7 +246,8 @@ fn run_cli_mode() -> AppResult<()> {
             port,
             log_file,
         } => {
-            init_logger(None, log_file);
+            init_logger(None, log_file)
+                .map_err(|e| AppError::Other(format!("LoggerError: {}", e)))?;
             run_server(&address, port);
         }
     };
