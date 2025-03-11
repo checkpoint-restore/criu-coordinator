@@ -22,6 +22,7 @@ bytes = "1.4.0"
 prost = "0.11.8"
 log-panics = { version = "2.1.0", features = ["with-backtrace"] }
 config = "0.13.1"
+thiserror = "2.0.12"
 
 [build-dependencies]
 prost-build = "0.11.8"

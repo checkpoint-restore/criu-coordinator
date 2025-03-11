@@ -19,24 +19,31 @@
 
 mod cli;
 mod client;
-mod server;
 mod constants;
-mod pipeline;
+mod errors;
 mod logger;
+mod pipeline;
+mod server;
 
-use constants::*;
 use config::Config;
+use constants::*;
 use std::collections::HashMap;
-use std::{env, path::PathBuf, process::exit, fs, os::unix::prelude::FileTypeExt};
-use std::path::Path;
+use std::str::FromStr;
+use std::{
+    env, fs,
+    os::unix::prelude::FileTypeExt,
+    path::{Path, PathBuf},
+};
 
 use clap::Parser;
 
-use cli::{Opts, Mode, DEFAULT_ADDRESS, DEFAULT_PORT};
+use cli::{Mode, Opts, DEFAULT_ADDRESS, DEFAULT_PORT};
 use client::run_client;
-use server::run_server;
+use errors::{AppError, AppResult};
 use logger::init_logger;
+use server::run_server;
 
+#[derive(Debug)]
 struct ClientConfig {
     log_file: String,
     address: String,
@@ -45,115 +52,225 @@ struct ClientConfig {
     dependencies: String,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+enum ActionType {
+    PreStreamer,
+    PreDump,
+    PostDump,
+    PreRestore,
+    Other,
+}
+
+impl ActionType {
+    fn to_str(&self) -> &'static str {
+        match self {
+            ActionType::PreStreamer => ACTION_PRE_STREAMER,
+            ActionType::PreDump => ACTION_PRE_DUMP,
+            ActionType::PostDump => ACTION_POST_DUMP,
+            ActionType::PreRestore => ACTION_PRE_RESTORE,
+            ActionType::Other => "",
+        }
+    }
+}
+
+impl FromStr for ActionType {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            ACTION_PRE_STREAMER => Ok(ActionType::PreStreamer),
+            ACTION_PRE_DUMP => Ok(ActionType::PreDump),
+            ACTION_POST_DUMP => Ok(ActionType::PostDump),
+            ACTION_PRE_RESTORE => Ok(ActionType::PreRestore),
+            _ => Ok(ActionType::Other),
+        }
+    }
+}
+
 const CONFIG_KEY_ID: &str = "id";
 const CONFIG_KEY_DEPS: &str = "dependencies";
 const CONFIG_KEY_ADDR: &str = "address";
 const CONFIG_KEY_PORT: &str = "port";
 const CONFIG_KEY_LOG: &str = "log-file";
 
-fn load_config_file<P: AsRef<Path>>(images_dir: P) -> ClientConfig {
+fn load_config_file<P: AsRef<Path>>(images_dir: P) -> AppResult<ClientConfig> {
     let images_dir = images_dir.as_ref();
-    let mut config_file = images_dir.join(Path::new(CONFIG_FILE));
-    if !config_file.is_file() {
-        // The following allows us to load global config files from /etc/criu.
-        // This is useful for example when we want to use the same config file
-        // for multiple containers.
-        let config_dir = PathBuf::from("/etc/criu");
-        config_file = config_dir.join(Path::new(CONFIG_FILE));
-        if !config_file.is_file() {
-            panic!("config file does not exist")
-        }
-    }
+    // The following allows us to load global config files from /etc/criu.
+    // This is useful for example when we want to use the same config file
+    // for multiple containers.
+    let config_paths = vec![
+        images_dir.join(Path::new(CONFIG_FILE)),
+        PathBuf::from("/etc/criu").join(Path::new(CONFIG_FILE)),
+    ];
 
-    let settings = Config::builder().add_source(config::File::from(config_file)).build().unwrap();
-    let settings_map = settings.try_deserialize::<HashMap<String, String>>().unwrap();
+    let config_file = config_paths
+        .iter()
+        .find(|path| path.is_file())
+        .ok_or_else(|| {
+            AppError::ConfigNotFound(format!(
+                "Could not find config file in {:?} or /etc/criu",
+                images_dir
+            ))
+        })?;
 
-    if !settings_map.contains_key(CONFIG_KEY_ID) {
-        panic!("id missing in config file")
-    }
-    let id = settings_map.get(CONFIG_KEY_ID).unwrap();
+    let settings = Config::builder()
+        .add_source(config::File::from(config_file.as_path()))
+        .build()
+        .unwrap();
 
-    let mut dependencies = String::new();
-    if settings_map.contains_key(CONFIG_KEY_DEPS) {
-        dependencies = settings_map.get(CONFIG_KEY_DEPS).unwrap().to_string();
-    }
+    let settings_map = settings
+        .try_deserialize::<HashMap<String, String>>()
+        .map_err(|e| AppError::ConfigParse(format!("Failed to parse config values: {}", e)))?;
 
-    let mut address = DEFAULT_ADDRESS;
-    if settings_map.contains_key(CONFIG_KEY_ADDR) {
-        address = settings_map.get(CONFIG_KEY_ADDR).unwrap();
-    }
+    let id = settings_map
+        .get(CONFIG_KEY_ID)
+        .ok_or_else(|| AppError::ConfigParse("ID missing in config file".to_string()))?
+        .clone();
 
-    let mut port = DEFAULT_PORT;
-    if settings_map.contains_key(CONFIG_KEY_PORT) {
-        port = settings_map.get(CONFIG_KEY_PORT).unwrap();
-    }
+    let dependencies = settings_map
+        .get(CONFIG_KEY_DEPS)
+        .cloned()
+        .unwrap_or_default();
 
-    let mut log_file = "-";
-    if settings_map.contains_key(CONFIG_KEY_LOG) {
-        log_file = settings_map.get(CONFIG_KEY_LOG).unwrap();
-    }
+    let address = settings_map
+        .get(CONFIG_KEY_ADDR)
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_ADDRESS.to_string());
 
-    ClientConfig {
-        log_file: log_file.to_string(),
-        address: address.to_string(),
-        port: port.to_string(),
-        id: id.to_string(),
+    let port = settings_map
+        .get(CONFIG_KEY_PORT)
+        .cloned()
+        .unwrap_or_else(|| DEFAULT_PORT.to_string());
+
+    let log_file = settings_map
+        .get(CONFIG_KEY_LOG)
+        .cloned()
+        .unwrap_or_else(|| "-".to_string());
+
+    Ok(ClientConfig {
+        log_file,
+        address,
+        port,
+        id,
         dependencies,
+    })
+}
+
+fn run_action_hook(action: &str) -> AppResult<()> {
+    let images_dir = env::var(ENV_IMAGE_DIR)
+        .map(PathBuf::from)
+        .map_err(|_| AppError::MissingEnvVar(format!("{}", ENV_IMAGE_DIR)))?;
+
+    let client_config = load_config_file(&images_dir)?;
+    let action_type = action.parse::<ActionType>().unwrap_or(ActionType::Other);
+
+    let enable_streaming = match action_type {
+        ActionType::PreStreamer => true,
+        ActionType::PreDump => {
+            match fs::symlink_metadata(images_dir.join(IMG_STREAMER_CAPTURE_SOCKET_NAME)) {
+                Ok(metadata) => {
+                    if !metadata.file_type().is_socket() {
+                        return Err(AppError::SocketError(format!(
+                            "{} exists but is not a Unix socket",
+                            IMG_STREAMER_CAPTURE_SOCKET_NAME
+                        )));
+                    }
+                    // If the stream socket exists, ignore CRIU's "pre-dump" action hook.
+                    false
+                }
+                Err(e) => return Err(AppError::IoError(e)),
+            }
+        }
+        ActionType::PostDump | ActionType::PreRestore => false,
+        ActionType::Other => return Ok(()),
+    };
+
+    // Initialize logger
+    init_logger(Some(&images_dir), client_config.log_file)
+        .map_err(|e| AppError::Other(format!("LoggerError: {}", e)))?;
+
+    // Parse port
+    let port = client_config
+        .port
+        .parse::<u16>()
+        .map_err(|e| AppError::InvalidPort(format!("Invalid port number: {}", e)))?;
+
+    // Run the client
+    // Note: This doesn't return a result, so we can't propagate errors from it
+    run_client(
+        &client_config.address,
+        port,
+        &client_config.id,
+        &client_config.dependencies,
+        action_type.to_str(),
+        &images_dir,
+        enable_streaming,
+    )
+    .map_err(|e| AppError::Other(format!("ClientError: {}", e)))?;
+
+    Ok(())
+}
+
+fn run_cli_mode() -> AppResult<()> {
+    let opts = Opts::parse();
+
+    match opts.mode {
+        Mode::Client {
+            address,
+            port,
+            id,
+            deps,
+            action,
+            images_dir,
+            stream,
+            log_file,
+        } => {
+            // Convert action string to enum for consistency
+            let action_type = action.parse::<ActionType>().unwrap_or(ActionType::Other);
+            let path_buf = PathBuf::from(&images_dir);
+
+            init_logger(Some(&path_buf), log_file)
+                .map_err(|e| AppError::Other(format!("LoggerError: {}", e)))?;
+
+            run_client(
+                &address,
+                port,
+                &id,
+                &deps,
+                action_type.to_str(),
+                &path_buf,
+                stream,
+            )
+            .map_err(|e| AppError::Other(format!("ClientError: {}", e)))?;
+        }
+        Mode::Server {
+            address,
+            port,
+            log_file,
+        } => {
+            init_logger(None, log_file)
+                .map_err(|e| AppError::Other(format!("LoggerError: {}", e)))?;
+            run_server(&address, port);
+        }
+    };
+
+    Ok(())
+}
+
+fn run() -> AppResult<()> {
+    if let Ok(action) = env::var(ENV_ACTION) {
+        run_action_hook(&action)
+    } else {
+        run_cli_mode()
     }
 }
 
 fn main() {
-    if let Ok(action) = env::var(ENV_ACTION) {
-
-        let images_dir = PathBuf::from(env::var(ENV_IMAGE_DIR)
-            .unwrap_or_else(|_| panic!("Missing {} environment variable", ENV_IMAGE_DIR)));
-
-        let client_config = load_config_file(&images_dir);
-
-        // Ignore all action hooks other than "pre-stream", "pre-dump" and "pre-restore".
-        let enable_streaming = match action.as_str() {
-            ACTION_PRE_STREAMER => true,
-            ACTION_PRE_DUMP => {
-                match fs::symlink_metadata(images_dir.join(IMG_STREAMER_CAPTURE_SOCKET_NAME)) {
-                    Ok(metadata) => {
-                        if !metadata.file_type().is_socket() {
-                            panic!("{} exists but is not a Unix socket", IMG_STREAMER_CAPTURE_SOCKET_NAME);
-                        }
-                        // If the stream socket exists, ignore CRIU's "pre-dump" action hook.
-                        exit(0);
-                    },
-                    Err(_) => false
-                }
-            },
-            ACTION_POST_DUMP => false,
-            ACTION_PRE_RESTORE => false,
-            _ => exit(0)
-        };
-
-        init_logger(Some(&images_dir), client_config.log_file);
-
-        run_client(
-            &client_config.address,
-            client_config.port.parse().unwrap(),
-            &client_config.id,
-            &client_config.dependencies,
-            &action,
-            &images_dir,
-            enable_streaming
-        );
-        exit(0);
-    }
-
-    let opts = Opts::parse();
-
-    match opts.mode {
-        Mode::Client { address, port, id, deps, action, images_dir, stream, log_file} => {
-            init_logger(Some(&PathBuf::from(&images_dir)), log_file);
-            run_client(&address, port, &id, &deps, &action, &PathBuf::from(images_dir), stream);
-        },
-        Mode::Server { address, port , log_file} => {
-            init_logger(None, log_file);
-            run_server(&address, port);
+    match run() {
+        Ok(_) => {}
+        Err(e) => {
+            eprintln!("Error: {}", e);
+            std::process::exit(1);
         }
-    };
+    }
 }
