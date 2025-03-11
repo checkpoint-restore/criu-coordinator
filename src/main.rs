@@ -205,7 +205,8 @@ fn run_action_hook(action: &str) -> AppResult<()> {
         action_type.to_str(),
         &images_dir,
         enable_streaming,
-    );
+    )
+    .map_err(|e| AppError::Other(format!("ClientError: {}", e)))?;
 
     Ok(())
 }
@@ -239,7 +240,8 @@ fn run_cli_mode() -> AppResult<()> {
                 action_type.to_str(),
                 &path_buf,
                 stream,
-            );
+            )
+            .map_err(|e| AppError::Other(format!("ClientError: {}", e)))?;
         }
         Mode::Server {
             address,

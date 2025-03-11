@@ -220,10 +220,16 @@ fn receive_response(tcp_stream: &mut TcpStream, expected_message: &str) -> io::R
 /// Create a Unix socket that accepts a connection with CRIU
 /// and run a streamer loop to receive and serialize CRIU images.
 fn run_streamer(tcp_stream: &mut TcpStream, images_dir: &Path) -> io::Result<()> {
+    // Configure TCP stream for better reliability
+    tcp_stream.set_nodelay(true)?;
+
+    // Resolve symlinks in the images directory path for safety
+    let canonical_images_dir = fs::canonicalize(images_dir)?;
     info!("Starting streamer at {}", images_dir.to_str().unwrap());
-    fs::create_dir_all(images_dir)?;
+    fs::create_dir_all(&canonical_images_dir)?;
+
     // Create Unix socket to communicate with CRIU
-    let stream_listener = StreamListener::bind_for_checkpoint(images_dir)?;
+    let stream_listener = StreamListener::bind_for_checkpoint(&canonical_images_dir)?;
     // Accept connection with CRIU.
     let criu_connection = stream_listener.accept()?;
 
@@ -242,12 +248,20 @@ fn run_streamer(tcp_stream: &mut TcpStream, images_dir: &Path) -> io::Result<()>
     // To be able to send the checkpoint images to the coordinator
     // server after CRIU exist, we open a new file descriptor that
     // will persist.
-    let images_dir = fs::File::open(images_dir)?;
+    let images_dir = fs::File::open(&canonical_images_dir)?;
 
     let mut saved_images: HashMap<Rc<str>, File> = HashMap::new();
     let mut image_size: HashMap<Rc<str>, i32> = HashMap::new();
 
-    let epoll_capacity = 8;
+    // let epoll_capacity = 8;
+    // Dynamic epoll capacity management
+    let mut active_file_requests = 0;
+    let mut epoll_capacity = MIN_EPOLL_CAPACITY;
+
+    // Tracking for performance metrics
+    let start_time = Instant::now();
+    let mut total_bytes_transferred: u64 = 0;
+
     while let Some((monitor_key, monitor_obj)) = monitor.poll(epoll_capacity)? {
         match monitor_obj {
             MonitorType::Criu(criu_connection) => {
@@ -269,6 +283,11 @@ fn run_streamer(tcp_stream: &mut TcpStream, images_dir: &Path) -> io::Result<()>
                             MonitorType::ImageFile(image_file),
                             EpollFlags::EPOLLIN,
                         )?;
+
+                        // Increase active file requests and adjust epoll capacity
+                        active_file_requests += 1;
+                        epoll_capacity = (active_file_requests + 4).min(MAX_EPOLL_CAPACITY);
+                        debug!("Adjusted epoll capacity to {}", epoll_capacity);
                     }
                     None => {
                         monitor.remove(monitor_key)?;
@@ -283,6 +302,7 @@ fn run_streamer(tcp_stream: &mut TcpStream, images_dir: &Path) -> io::Result<()>
                     .entry(Rc::clone(&img_file.filename))
                     .or_insert_with(|| 0);
                 *image_size_entry += file_size;
+                total_bytes_transferred += file_size as u64;
 
                 if !eof {
                     info!(
@@ -292,16 +312,31 @@ fn run_streamer(tcp_stream: &mut TcpStream, images_dir: &Path) -> io::Result<()>
                     let output_file = img_file.output_file.try_clone()?;
                     saved_images.insert(Rc::clone(&img_file.filename), output_file);
                     monitor.remove(monitor_key)?;
+
+                    // Decrease active file requests and adjust epoll capacity
+                    active_file_requests -= 1;
+                    epoll_capacity = (active_file_requests + 4).max(MIN_EPOLL_CAPACITY);
+                    debug!("Adjusted epoll capacity to {}", epoll_capacity);
                 }
             }
         }
     }
 
-    info!("Local checkpoint complete");
-    send_message(tcp_stream, "SYN");
+    let checkpoint_duration = start_time.elapsed();
+    info!(
+        "Local checkpoint complete in {:?}, {} bytes captured",
+        checkpoint_duration, total_bytes_transferred
+    );
 
+    // Transfer start time
+    let transfer_start_time = Instant::now();
+
+    send_message(tcp_stream, "SYN")?;
     // FIXME: Receive ACK message
-    receive_response(tcp_stream, "ACK");
+    receive_response(tcp_stream, "ACK")?;
+
+    // Transfer local checkpoint to server
+    let mut total_files_transferred = 0;
 
     // FIXME: Transfer local checkpoint to server
     for (img_name, img_file) in saved_images.iter() {
@@ -310,7 +345,7 @@ fn run_streamer(tcp_stream: &mut TcpStream, images_dir: &Path) -> io::Result<()>
             img_size: image_size[img_name],
         };
 
-        send_message(tcp_stream, &img_metadata.dump());
+        send_message(tcp_stream, &img_metadata.dump())?;
 
         // Go to the beginning of the file.
         lseek(img_file.as_raw_fd(), 0, Whence::SeekSet)?;
@@ -318,27 +353,78 @@ fn run_streamer(tcp_stream: &mut TcpStream, images_dir: &Path) -> io::Result<()>
         // Send file content
         let mut offset = 0;
         let mut to_write = image_size[img_name] as usize;
+        let mut tries = 0;
+
         while to_write > 0 {
-            let bytes_sent = sendfile(
+            match sendfile(
                 tcp_stream.as_raw_fd(),
                 img_file.as_raw_fd(),
                 Some(&mut offset),
                 to_write,
-            )?;
-            info!("bytes_sent: {}", bytes_sent);
-            to_write -= bytes_sent;
+            ) {
+                Ok(b) => {
+                    if b == 0 {
+                        // Zero bytes sent, might indicate an issue
+                        tries += 1;
+                        if tries >= MAX_RETRIES {
+                            return Err(io::Error::new(
+                                io::ErrorKind::Other,
+                                format!("Failed to send file data after {} attempts", MAX_RETRIES),
+                            ));
+                        }
+                        debug!("Zero bytes sent, retrying ({}/{})", tries, MAX_RETRIES);
+                        std::thread::sleep(RETRY_DELAY);
+                    } else {
+                        debug!("bytes sent: {}", b);
+                        to_write -= b;
+                        tries = 0; // reset on success
+                    }
+                }
+                Err(e) => {
+                    // Retry logic
+                    tries += 1;
+                    if tries >= MAX_RETRIES {
+                        return Err(io::Error::new(
+                            io::ErrorKind::Other,
+                            format!("Failed to send file: {}", e),
+                        ));
+                    }
+                    warn!(
+                        "Error sending file (retry {}/{}): {}",
+                        tries, MAX_RETRIES, e
+                    );
+                    std::thread::sleep(RETRY_DELAY);
+                }
+            }
         }
 
         // Wait to receive ACK
-        receive_response(tcp_stream, "IMG_ACK");
+        receive_response(tcp_stream, "IMG_ACK")?;
+        total_files_transferred += 1;
     }
 
     // Send SYN message
-    send_message(tcp_stream, "SYN");
+    send_message(tcp_stream, "SYN")?;
 
     // FIXME: Receive ACK message
+    // Try to receive final ACK, but don't fail if we don't get it ::> Should REVERT if we don't get any response??
+    let _ = receive_response(tcp_stream, "ACK");
 
-    info!("Checkpoint transfer complete");
+    let transfer_duration = transfer_start_time.elapsed();
+    let total_duration = start_time.elapsed();
+
+    let transfer_rate = if transfer_duration.as_secs() > 0 {
+        total_bytes_transferred as f64 / transfer_duration.as_secs() as f64
+    } else {
+        total_bytes_transferred as f64
+    };
+
+    info!(
+        "Checkpoint transfer complete: {} files, {} bytes in {:?} ({:.2} bytes/sec)",
+        total_files_transferred, total_bytes_transferred, transfer_duration, transfer_rate
+    );
+
+    info!("Total operation completed in {:?}", total_duration);
 
     Ok(())
 }
