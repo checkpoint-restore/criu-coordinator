@@ -1,10 +1,9 @@
-use super::checkpoint::K8sClient;
+use super::client::K8sClient;
 use k8s_openapi::api::core::v1::Pod;
-use kube::{core::labels, ResourceExt};
 use log::info;
 use std::error::Error;
 
-pub struct DiscoveredContainers {
+pub struct DiscoveredContainer {
     pub pod_name: String,
     pub namespace: String,
     pub container_name: String,
@@ -12,7 +11,10 @@ pub struct DiscoveredContainers {
 }
 
 // Discover pods in namespace
-pub async fn dicover_pods(client: &K8sClient, namespace: &str) -> Result<Vec<Pod>, Box<dyn Error>> {
+pub async fn discover_pods(
+    client: &K8sClient,
+    namespace: &str,
+) -> Result<Vec<Pod>, Box<dyn Error>> {
     client.list_pods(namespace).await
 }
 
@@ -21,10 +23,10 @@ pub async fn discover_containers(
     client: &K8sClient,
     namespace: &str,
     label_selector: Option<&str>,
-) -> Result<Vec<DiscoveredContainers>, Box<dyn Error>> {
+) -> Result<Vec<DiscoveredContainer>, Box<dyn Error>> {
     let pods = client.list_pods(namespace).await?;
 
-    let mut containers: Vec<DiscoveredContainers> = Vec::new();
+    let mut containers: Vec<DiscoveredContainer> = Vec::new();
     for pod in pods {
         let pod_name = pod.metadata.name.clone().unwrap_or_default();
         let pod_namespace = pod.metadata.namespace.clone().unwrap_or_default();
@@ -45,7 +47,7 @@ pub async fn discover_containers(
         if let Some(spec) = pod.spec {
             for container in spec.containers {
                 let container_name = container.name;
-                containers.push(DiscoveredContainers {
+                containers.push(DiscoveredContainer {
                     pod_name: pod_name.clone(),
                     namespace: pod_namespace.clone(),
                     container_name,
