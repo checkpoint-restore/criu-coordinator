@@ -1,0 +1,5 @@
+{
+    "checkpoint-test-pod/nginx": [
+        "checkpoint-test-db/redis"
+    ]
+}
