@@ -116,7 +116,12 @@ pub enum KubernetesCommand {
 
     #[clap(about = "Trigger chankpoint for containers")]
     Checkpoint {
-        #[clap(short, long, default_value = "default", help = "Kubernetes namespace")]
+        #[clap(
+            short = 'n',
+            long,
+            default_value = "default",
+            help = "Kubernetes namespace"
+        )]
         namespace: String,
 
         #[clap(short, long, help = "Pod name")]
@@ -125,7 +130,7 @@ pub enum KubernetesCommand {
         #[clap(short, long, help = "Container name")]
         container: String,
 
-        #[clap(short, long, help = "Node name")]
+        #[clap(short = 'N', long, help = "Node name")]
         node: String,
 
         #[clap(long, help = "Path to client certificate for kubelet authentication")]
@@ -139,6 +144,9 @@ pub enum KubernetesCommand {
     CoordinatedCheckpoint {
         #[clap(short, long, default_value = "default", help = "Kubernetes namespace")]
         namespace: String,
+
+        #[clap(short, long, help = "Application name (used for labeling)")]
+        app_name: String,
 
         #[clap(short, long, help = "Label selector to identify application pods")]
         selector: String,

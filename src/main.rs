@@ -27,6 +27,8 @@ mod server;
 
 use config::Config;
 use constants::*;
+use k8s_openapi::serde_json;
+use libc::printf;
 use std::collections::HashMap;
 use std::path::Path;
 use std::{env, fs, os::unix::prelude::FileTypeExt, path::PathBuf, process::exit};
@@ -35,7 +37,10 @@ use clap::Parser;
 
 use cli::{KubernetesCommand, Mode, Opts, DEFAULT_ADDRESS, DEFAULT_PORT};
 use client::run_client;
-use k8s::{discover_containers, trigger_checkpoint, DiscoveredContainer, K8sClient};
+use k8s::{
+    coordinate_checkpoint, discover_containers, trigger_checkpoint, DiscoveredContainer,
+    DistributedApp, K8sClient,
+};
 use logger::init_logger;
 use server::run_server;
 
@@ -115,6 +120,7 @@ async fn run_kubernetes_command(command: KubernetesCommand) {
         Ok(k8s_client) => k8s_client,
         Err(e) => {
             // error!(W"Failed to create Kubernetes client: {}", e);
+            println!("run_kubernetes_command(): client creation failed");
             exit(1);
         }
     };
@@ -124,14 +130,16 @@ async fn run_kubernetes_command(command: KubernetesCommand) {
             namespace,
             selector,
         } => {
-            let containers =
-                match discover_containers(&client, &namespace, selector.as_deref()).await {
-                    Ok(containers) => containers,
-                    Err(e) => {
-                        // error!(W"Failed to discover containers: {}", e);
-                        exit(1);
-                    }
-                };
+            let containers = match discover_containers(&client, &namespace, selector.as_deref())
+                .await
+            {
+                Ok(containers) => containers,
+                Err(e) => {
+                    println!("run_kubernetes_command(): KubernetesCommand::Discover || Containers undiscovered");
+                    // error!(W"Failed to discover containers: {}", e);
+                    exit(1);
+                }
+            };
             println!("Discovered {} containers:", containers.len());
             for container in containers {
                 println!(
@@ -156,13 +164,24 @@ async fn run_kubernetes_command(command: KubernetesCommand) {
                 namespace,
             };
 
-            trigger_checkpoint(
+            let _ = match trigger_checkpoint(
                 &container_info,
                 &node,
                 cert_path.as_deref(),
                 key_path.as_deref(),
             )
-            .await;
+            .await
+            {
+                Ok(x) => {
+                    use std::ffi::CString;
+                    let msg = CString::new("Checkpoint triggered successfully").unwrap();
+                    unsafe { printf(msg.as_ptr()) };
+                }
+                Err(e) => {
+                    println!("run_kubernetes_command(): KubernetesCommand::Checkpoint || Containers undiscovered; {:?}", e);
+                    exit(1);
+                }
+            };
 
             println!("Checkpoint triggered successfully");
         }
@@ -173,8 +192,76 @@ async fn run_kubernetes_command(command: KubernetesCommand) {
             deps_file,
             cert,
             key,
+            app_name,
         } => {
-            todo!("Need to implement")
+            let client = match K8sClient::new().await {
+                Ok(client) => client,
+                Err(_) => exit(1),
+            };
+
+            // Discover containers matching the selector
+            let containers = match discover_containers(&client, &namespace, Some(&selector)).await {
+                Ok(container_list) => container_list,
+                Err(e) => {
+                    println!("run_kubernetes_command(): KubernetesCommand::CoordinatedCheckpoint || Containers undiscovered; {:?}", e);
+                    exit(1);
+                }
+            };
+
+            if containers.is_empty() {
+                println!("No containers found matching selector: {}", selector);
+                exit(1);
+            }
+
+            println!(
+                "Found {} containers for application {}",
+                containers.len(),
+                app_name
+            );
+
+            let mut app = DistributedApp::new(&app_name);
+
+            // Add discovered containers to the application
+            for container in containers {
+                println!(
+                    "- Pod: {}, Container: {}, Node: {}",
+                    container.pod_name, container.container_name, container.node_name
+                );
+                app.add_container(container);
+            }
+
+            // Load dependencies from file if specified
+            if let Some(deps_path) = deps_file {
+                let deps_content = match fs::read_to_string(deps_path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        println!("run_kubernetes_command(): KubernetesCommand::CoordinatedCheckpoint || depsContent; {:?}", e);
+                        exit(1);
+                    }
+                };
+
+                let deps: HashMap<String, Vec<String>> = match serde_json::from_str(&deps_content) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        println!("run_kubernetes_command(): KubernetesCommand::CoordinatedCheckpoint || hashMap; {:?}", e);
+                        exit(1);
+                    }
+                };
+
+                app.set_dependencies(deps);
+            }
+
+            // Perform coordinated checkpoint
+            println!("Starting coordinated checkpoint...");
+            match coordinate_checkpoint(&app, cert.as_deref(), key.as_deref()).await {
+                Ok(_) => println!("All Good"),
+                Err(e) => {
+                    println!("run_kubernetes_command(): KubernetesCommand::CoordinatedCheckpoint || checkpoint results; {:?}", e);
+                    exit(1);
+                }
+            }
+
+            println!("Coordinated checkpoint completed successfully");
         }
     }
 }
