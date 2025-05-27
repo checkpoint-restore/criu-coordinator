@@ -72,6 +72,9 @@ pub enum Mode {
 
         #[clap(short = 'o', long, default_value = "-", hide_default_value = true, help = "Log file name")]
         log_file: String,
+
+        #[clap(long, default_value = "30", help = "Maximum number of retries for client connections")]
+        max_retries: u16,
     },
 
     #[clap(about = "Generate shell completions")]
