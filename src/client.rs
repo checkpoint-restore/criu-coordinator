@@ -25,6 +25,7 @@ use std::str;
 use json::object;
 use log::*;
 
+use crate::constants::MESSAGE_ACK;
 use crate::pipeline::streamer::streamer;
 
 const BUFFER_SIZE: usize = 32768 * 4;
@@ -57,7 +58,7 @@ pub fn run_client(address: &str, port: u16, id: &str, deps: &str, action: &str, 
             match response {
                 Ok(response_str) => {
                     info!("Server responded with: {}", response_str);
-                    if response_str != "ACK" {
+                    if response_str != MESSAGE_ACK {
                         exit(1);
                     }
                 }

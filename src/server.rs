@@ -31,6 +31,8 @@ use json::{Null, JsonValue};
 mod client_status;
 use client_status::ClientStatus;
 
+use crate::constants::*;
+
 const BUFFER_SIZE: usize = 32768 * 4;
 
 #[derive(Clone)]
@@ -105,9 +107,9 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
     info!("[{client_id}] [>>] ACTION: {client_action}");
     info!("[{client_id}] [>>] DEPENDENCIES: {client_deps}");
 
-    let mut response_message = "ACK";
+    let mut response_message = MESSAGE_ACK;
 
-    if client_id == "kubescr" && client_action == "add_dependencies" {
+    if client_id == "kubescr" && client_action == ACTION_ADD_DEPENDENCIES {
         let mut container_dependencies_lock = container_dependencies.lock().unwrap();
 
         for (key, values) in client_deps.entries() {
@@ -145,7 +147,8 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
         binding.split(':').collect()
     };
 
-    if client_action == "post-dump" {
+
+    if client_action == ACTION_POST_DUMP {
         info!("[{client_id}] [==] Wait for all dependencies to create local checkpoint");
 
         for dependency in dependencies.iter() {
@@ -155,13 +158,13 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
             // All dependencies must be present; otherwise we should abort the checkpoint.
             if !clients_lock.contains_key(*dependency) {
                 error!("[!!] Dependency {dependency} is no longer connected");
-                response_message = "Not connected";
+                response_message = MESSAGE_NOT_CONNECTED;
                 break;
             }
 
             if let Some(x) = clients_lock.get_mut(*dependency) {
                 if x.has_local_checkpoint() {
-                    response_message = "checkpoint is already created";
+                    response_message = MESSAGE_CHECKPOINT_EXISTS;
                     break;
                 }
                 x.set_local_checkpoint();
@@ -178,7 +181,7 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
 
     response_message = get_response_message(&client_id, clients_set);
 
-    if response_message != "ACK" {
+    if response_message != MESSAGE_ACK {
         // Send response message in case of an error.
         info!("[{client_id}] [<<] Sending {response_message}");
         tcp_stream.lock().unwrap().write_all(response_message.as_bytes()).expect("Failed to send message");
@@ -214,13 +217,15 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
         if connected {
             info!("[{client_id}] [==] {dependency} connected");
         } else {
-            response_message = "Timeout";
+            response_message = MESSAGE_TIMEOUT;
             info!("[{client_id}] [==] Timeout for dependency: {dependency}");
             break;
         }
     }
 
-    if response_message != "ACK" {
+
+
+    if response_message != MESSAGE_ACK {
         // Send response message in case of an error.
         info!("[{client_id}] [<<] Sending {response_message}");
         tcp_stream.lock().unwrap().write_all(response_message.as_bytes()).expect("Failed to send message");
@@ -266,7 +271,7 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
         if ready {
             info!("[{client_id}] [==] Dependency {dependency} is ready");
         } else {
-            response_message = "Timeout";
+            response_message = MESSAGE_TIMEOUT;
             info!("[{client_id}] [==] Timeout for dependency: {dependency}");
             break;
         }
@@ -275,7 +280,7 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
     info!("[{client_id}] [<<] Sending {response_message}");
     tcp_stream.lock().unwrap().write_all(response_message.as_bytes()).expect("Failed to send message");
 
-    if client_action == "pre-stream" {
+    if client_action == ACTION_PRE_STREAM {
         // 3. Wait to receive SYN indicating that a local checkpoint has been created.
         let mut buffer = [0; BUFFER_SIZE];
         let response = match tcp_stream.lock().unwrap().read(&mut buffer) {
@@ -288,7 +293,7 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
         match response {
             Ok(response_str) => {
                 info!("[{client_id}] [==] Client responded with: {}", response_str);
-                if response_str != "SYN" {
+                if response_str != MESSAGE_SYN {
                     exit(1);
                 }
                 if let Some(x) = clients_set.lock().unwrap().get_mut(&client_id) {
@@ -301,7 +306,7 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
         }
     }
 
-    if response_message == "ACK" && client_action == "pre-stream" {
+    if response_message == MESSAGE_ACK && client_action == ACTION_PRE_STREAM {
             let images_dir = "/tmp/server-images".to_string();
             create_dir_all(&images_dir).unwrap();
 
@@ -319,7 +324,7 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
                     },
                 };
 
-                if message_data == "SYN" {
+                if message_data == MESSAGE_SYN {
                     break;
                 }
 
@@ -337,7 +342,7 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
 
                 info!("[{client_id}] [==] Receiving {} with size {} to {:?}", img_name, img_size, output_file_path.to_str());
 
-                let response_message: &str = "IMG_ACK";
+                let response_message: &str = MESSAGE_IMG_ACK;
 
                 let mut buffer = [0u8; 1024];
                 let mut bytes_read = 0;
@@ -370,10 +375,10 @@ fn get_response_message(client_id: &str, clients_set: &Arc<Mutex<HashMap<String,
     if clients_lock.is_empty() || !clients_lock.contains_key(client_id) {
         info!("[{}] [==] Insert client ID", client_id);
         clients_lock.insert(client_id.to_string(), ClientStatus::new());
-        return "ACK";
+        return MESSAGE_ACK;
     }
 
-    "client already connected"
+    MESSAGE_ALREADY_CONNECTED
 }
 
 
@@ -387,7 +392,7 @@ fn client_close_connection(client_id: &String, client_action: &JsonValue, tcp_st
         }
     }
 
-    if client_action != "pre-dump" {
+    if client_action == ACTION_POST_STREAM || client_action == ACTION_POST_RESTORE {
         clients_set.lock().unwrap().remove(client_id);
         info!("[{client_id}] [==] Client removed");
     }

@@ -112,7 +112,7 @@ fn main() {
 
         // Ignore all action hooks other than "pre-stream", "pre-dump" and "pre-restore".
         let enable_streaming = match action.as_str() {
-            ACTION_PRE_STREAMER => true,
+            ACTION_PRE_STREAM => true,
             ACTION_PRE_DUMP => {
                 match fs::symlink_metadata(images_dir.join(IMG_STREAMER_CAPTURE_SOCKET_NAME)) {
                     Ok(metadata) => {
