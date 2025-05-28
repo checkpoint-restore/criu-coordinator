@@ -17,7 +17,7 @@
  *
  */
 
- /// This module is responsible for I/O monitoring of the stream file descriptors.
+ //! This module is responsible for I/O monitoring of the stream file descriptors.
 
 use std::{
     os::fd::RawFd,

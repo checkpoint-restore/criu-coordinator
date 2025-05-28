@@ -17,10 +17,10 @@
  *
  */
 
-use criu_coordinator::criu::ImgStreamerRequestEntry;
+//! This module is responsible for handling the communication between the
+//! criu-coordinator and CRIU over the a local (unix) socket.
 
-/// This module is responsible for handling the communication between the
-/// criu-coordinator and CRIU over the a local (unix) socket.
+use criu_coordinator::criu::ImgStreamerRequestEntry;
 
 use log::*;
 use std::{

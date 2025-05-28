@@ -17,8 +17,9 @@
  *
  */
 
+ //! This module is responsible for facilitating the transmission of CRIU images.
+
 use json::object;
-/// This module is responsible for facilitating the transmission of CRIU images.
 
 use log::*;
 use std::{
