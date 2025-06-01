@@ -83,7 +83,9 @@ validate.completions: SHELL:=/usr/bin/env bash # Set shell to bash for this targ
 validate.completions:  ## Validate generated completions with their shells
 	# Check if the files can be loaded by the shell
 	. completions/bash/$(NAME)
-	if [ -x /bin/zsh ]; then /bin/zsh completions/zsh/_$(NAME); fi
+	if [ -x /bin/zsh ]; then \
+		/bin/zsh -c 'autoload -Uz compinit; compinit; source completions/zsh/_$(NAME)'; \
+	fi
 	if [ -x /bin/fish ]; then /bin/fish completions/fish/$(NAME).fish; fi
 
 .PHONY: install.completions
