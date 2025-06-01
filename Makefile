@@ -14,7 +14,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-all: criu-coordinator
+NAME = criu-coordinator
+
+.PHONY: all
+all: $(NAME)
+
+BASHINSTALLDIR=${PREFIX}/share/bash-completion/completions
+ZSHINSTALLDIR=${PREFIX}/share/zsh/site-functions
+FISHINSTALLDIR=${PREFIX}/share/fish/vendor_completions.d
 
 PREFIX ?= $(DESTDIR)/usr/local
 BINDIR ?= $(PREFIX)/bin
@@ -34,28 +41,67 @@ ifeq (,$(wildcard $(CARGO)))
 	CARGO=cargo
 endif
 
-target/$(BUILD)/criu-coordinator: $(DEPS)
+target/$(BUILD)/$(NAME): $(DEPS)
 	$(CARGO) build $(BUILD_FLAGS)
 
-criu-coordinator: target/$(BUILD)/criu-coordinator
+$(NAME): target/$(BUILD)/$(NAME)
 	cp -a $< $@
 
-install: target/$(BUILD)/criu-coordinator
-	install -m0755 $< $(BINDIR)/criu-coordinator
+.PHONY: install
+install: target/$(BUILD)/$(NAME) install.completions
+	@echo "  INSTALL " $<
+	@mkdir -p $(DESTDIR)$(BINDIR)
+	@install -m0755 $< $(BINDIR)/$(NAME)
 
-uninstall:
-	$(RM) $(addprefix $(BINDIR)/,criu-coordinator)
+.PHONY: uninstall
+uninstall: uninstall.completions
+	@echo " UNINSTALL" $(NAME)
+	$(RM) $(addprefix $(DESTDIR)$(BINDIR)/,$(NAME))
 
+.PHONY: lint
 lint:
 	$(CARGO) clippy --all-targets --all-features -- -D warnings
 
+.PHONY: lint-fix
 lint-fix:
 	$(CARGO) clippy --fix --all-targets --all-features -- -D warnings
 
+.PHONY: test
 test:
 	$(CARGO) test
 
-clean:
-	rm -rf target criu-coordinator target
+.PHONY: completions
+completions: $(NAME)
+	declare -A outfiles=([bash]=%s [zsh]=_%s [fish]=%s.fish);\
+	for shell in $${!outfiles[*]}; do \
+		outfile=$$(printf "completions/$$shell/$${outfiles[$$shell]}" $(NAME)); \
+		./$(NAME) completions $$shell >| $$outfile; \
+	done
 
-.PHONY: all clean install uninstall lint lint-fix test
+.PHONY: validate.completions
+validate.completions: SHELL:=/usr/bin/env bash # Set shell to bash for this target
+validate.completions:
+	# Check if the files can be loaded by the shell
+	. completions/bash/$(NAME)
+	if [ -x /bin/zsh ]; then /bin/zsh completions/zsh/_$(NAME); fi
+	if [ -x /bin/fish ]; then /bin/fish completions/fish/$(NAME).fish; fi
+
+.PHONY: install.completions
+install.completions:
+	@install -d -m 755 ${DESTDIR}${BASHINSTALLDIR}
+	@install -m 644 completions/bash/$(NAME) ${DESTDIR}${BASHINSTALLDIR}
+	@install -d -m 755 ${DESTDIR}${ZSHINSTALLDIR}
+	@install -m 644 completions/zsh/_$(NAME) ${DESTDIR}${ZSHINSTALLDIR}
+	@install -d -m 755 ${DESTDIR}${FISHINSTALLDIR}
+	@install -m 644 completions/fish/$(NAME).fish ${DESTDIR}${FISHINSTALLDIR}
+
+.PHONY: uninstall.completions
+uninstall.completions:
+	@$(RM) $(addprefix ${DESTDIR}${BASHINSTALLDIR}/,$(NAME))
+	@$(RM) $(addprefix ${DESTDIR}${ZSHINSTALLDIR}/,_$(NAME))
+	@$(RM) $(addprefix ${DESTDIR}${FISHINSTALLDIR}/,$(NAME).fish)
+
+.PHONY: clean
+clean:
+	rm -rf target $(NAME)
+
