@@ -30,7 +30,9 @@ use std::collections::HashMap;
 use std::{env, path::PathBuf, process::exit, fs, os::unix::prelude::FileTypeExt};
 use std::path::Path;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::{generate, Shell};
+use std::io;
 
 use cli::{Opts, Mode, DEFAULT_ADDRESS, DEFAULT_PORT};
 use client::run_client;
@@ -147,6 +149,12 @@ fn main() {
     let opts = Opts::parse();
 
     match opts.mode {
+        Mode::Completions { shell } => {
+            let shell: Shell = shell.parse().expect("Invalid shell type");
+            let mut cmd = Opts::command();
+            generate(shell, &mut cmd, "criu-coordinator", &mut io::stdout());
+        }
+
         Mode::Client { address, port, id, deps, action, images_dir, stream, log_file} => {
             init_logger(Some(&PathBuf::from(&images_dir)), log_file);
             run_client(&address, port, &id, &deps, &action, &PathBuf::from(images_dir), stream);

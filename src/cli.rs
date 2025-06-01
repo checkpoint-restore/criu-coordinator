@@ -73,4 +73,10 @@ pub enum Mode {
         #[clap(short = 'o', long, default_value = "-", hide_default_value = true, help = "Log file name")]
         log_file: String,
     },
+
+    #[clap(about = "Generate shell completions")]
+    Completions {
+        #[clap(help = "Shell type (e.g., bash, zsh, fish, powershell, elvish)")]
+        shell: String,
+    },
 }
