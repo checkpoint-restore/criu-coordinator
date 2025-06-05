@@ -26,3 +26,5 @@ pub mod criu {
 pub mod image {
     include!(concat!(env!("OUT_DIR"), "/image.rs"));
 }
+
+pub mod constants;
