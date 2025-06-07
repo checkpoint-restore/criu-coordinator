@@ -26,7 +26,7 @@ use std::{
 };
 
 use log::*;
-use json::{Null, JsonValue};
+use json::{JsonValue};
 
 mod client_status;
 use client_status::ClientStatus;
@@ -40,14 +40,14 @@ pub struct Server {
 }
 
 /// Start CRIU coordinator server
-pub fn run_server(address: &str, port: u16) {
+pub fn run_server(address: &str, port: u16, max_retries: u16) {
     let mut server = Server::new();
 
     // Create a shared HashMap to indicate connected clients using an Arc and Mutex
     let clients = Arc::new(Mutex::new(HashMap::new()));
     let container_dependencies = Arc::new(Mutex::new(HashMap::new()));
 
-    server.run(address, port, clients, container_dependencies);
+    server.run(address, port, max_retries, clients, container_dependencies);
 }
 
 impl Server {
@@ -57,7 +57,7 @@ impl Server {
     }
 
     // Start the server and listen for incoming connections.
-    pub fn run(&mut self, address: &str, port: u16, clients: Arc<Mutex<HashMap<String, ClientStatus>>>, container_dependencies: Arc<Mutex<HashMap<String, Vec<String>>>>) {
+    pub fn run(&mut self, address: &str, port: u16, max_retries: u16, clients: Arc<Mutex<HashMap<String, ClientStatus>>>, container_dependencies: Arc<Mutex<HashMap<String, Vec<String>>>>) {
 
         // Create the server socket and start listening for incoming connections.
         let server_address = format!("{}:{}", address, port);
@@ -78,7 +78,7 @@ impl Server {
 
                     // Spawn a new thread to handle the client connection.
                     thread::spawn(move || {
-                        handle_client(stream_clone, &clients_clone, &container_dependencies_clone);
+                        handle_client(stream_clone, &clients_clone, &container_dependencies_clone, max_retries);
                     });
                 }
                 Err(e) => {
@@ -90,14 +90,34 @@ impl Server {
 }
 
 // Handle a client connection.
-fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<HashMap<String, ClientStatus>>>, container_dependencies: &Arc<Mutex<HashMap<String, Vec<String>>>>) {
+fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<HashMap<String, ClientStatus>>>, container_dependencies: &Arc<Mutex<HashMap<String, Vec<String>>>>, max_retries: u16) {
 
     info!("[>>] Receive client ID, action and dependencies");
     let mut buffer = [0; 32768 * 4];
     let message_data = match tcp_stream.lock().unwrap().read(&mut buffer) {
-        Ok(size) => json::parse(from_utf8(&buffer[..size]).unwrap().to_string().as_str()).unwrap(),
-        _ => Null,
+        Ok(0) => {
+            error!("[!!] Client disconnected before sending data");
+            return;
+        }
+        Ok(size) => match from_utf8(&buffer[..size]) {
+            Ok(text) => match json::parse(text) {
+                Ok(data) => data,
+                Err(e) => {
+                    error!("[!!] Invalid JSON received: {}", e);
+                    return;
+                }
+            },
+            Err(e) => {
+                error!("[!!] Invalid UTF-8 received: {}", e);
+                return;
+            }
+        },
+        Err(e) => {
+            error!("[!!] Failed to read from client: {}", e);
+            return;
+        }
     };
+
 
     let client_id = message_data["id"].to_string();
     let client_action = &message_data["action"];
@@ -108,6 +128,7 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
     info!("[{client_id}] [>>] DEPENDENCIES: {client_deps}");
 
     let mut response_message = MESSAGE_ACK;
+
 
     if client_id == "kubescr" && client_action == ACTION_ADD_DEPENDENCIES {
         let mut container_dependencies_lock = container_dependencies.lock().unwrap();
@@ -138,36 +159,71 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
     }
 
     let binding = client_deps.to_string();
-    let container_dependencies_lock = container_dependencies.lock().unwrap();
-
-    let dependencies: Vec<&str> = if binding.is_empty() {
-        let dependencies_lock = container_dependencies_lock.get(&client_id).unwrap();
-        dependencies_lock.iter().map(|x| x.as_str()).collect()
+    let dependencies: Vec<String> = if binding.is_empty() {
+        container_dependencies
+        .lock().unwrap()
+        .get(&client_id)
+        .cloned()
+        .unwrap_or_default()
     } else {
-        binding.split(':').collect()
+        binding.split(':').map(str::to_string).collect()
     };
 
 
     if client_action == ACTION_POST_DUMP {
         info!("[{client_id}] [==] Wait for all dependencies to create local checkpoint");
 
-        for dependency in dependencies.iter() {
-            info!("[{client_id}] [==] Checking local checkpoint: {dependency}");
+        {
             let mut clients_lock = clients_set.lock().unwrap();
-
-            // All dependencies must be present; otherwise we should abort the checkpoint.
-            if !clients_lock.contains_key(*dependency) {
-                error!("[!!] Dependency {dependency} is no longer connected");
-                response_message = MESSAGE_NOT_CONNECTED;
-                break;
-            }
-
-            if let Some(x) = clients_lock.get_mut(*dependency) {
-                if x.has_local_checkpoint() {
+            if let Some(status) = clients_lock.get_mut(&client_id) {
+                if status.has_local_checkpoint() {
                     response_message = MESSAGE_CHECKPOINT_EXISTS;
+                } else {
+                    status.set_local_checkpoint();
+                }
+            } else {
+                error!("[!!] Client {} not found in clients_set during post-dump", client_id);
+                response_message = MESSAGE_NOT_CONNECTED;
+            }
+        }
+
+        // Wait until all dependencies have also set their local_checkpoint.
+        if response_message == MESSAGE_ACK {
+            for dependency in dependencies.iter() {
+                info!("[{client_id}] [==] Waiting for dependency {} to complete its local checkpoint", dependency);
+
+                let mut retry_count = max_retries;
+
+                loop {
+                    let dependency_completed = {
+                        let clients_lock = clients_set.lock().unwrap();
+                        if let Some(dep_status) = clients_lock.get(dependency) {
+                            dep_status.has_local_checkpoint()
+                        } else {
+                            // In post-dump phase, dependency not found might have already completed and been removed
+                            // so we assume it has completed.
+                            true
+                        }
+                    };
+
+                    if dependency_completed {
+                        info!("[{client_id}] [==] Dependency {} has completed its local checkpoint", dependency);
+                        break;
+                    }
+
+                    if retry_count > 0 {
+                        retry_count -= 1;
+                        thread::sleep(time::Duration::from_secs(1));
+                    } else {
+                        error!("[{client_id}] [!!] Timeout waiting for dependency {}", dependency);
+                        response_message = MESSAGE_TIMEOUT;
+                        break;
+                    }
+                }
+
+                if response_message != MESSAGE_ACK {
                     break;
                 }
-                x.set_local_checkpoint();
             }
         }
 
@@ -195,11 +251,11 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
         info!("[{client_id}] [==] Checking connection of: {dependency}");
 
         let mut connected = false;
-        let mut max_retries = 30;
+        let mut max_retries = max_retries;
 
         loop {
             if clients_set.lock().unwrap().contains_key(&dependency.to_string()) {
-                if let Some(x) = clients_set.lock().unwrap().get_mut(*dependency) {
+                if let Some(x) = clients_set.lock().unwrap().get_mut(dependency) {
                     connected = x.is_connected();
                 }
                 break;
@@ -246,11 +302,11 @@ fn handle_client(tcp_stream: Arc<Mutex<TcpStream>>, clients_set: &Arc<Mutex<Hash
         info!("[{client_id}] [==] Checking readiness of: {dependency}");
 
         let mut ready = false;
-        let mut max_retries = 30;
+        let mut max_retries = max_retries;
 
         loop {
-            if clients_set.lock().unwrap().contains_key(*dependency) {
-                if let Some(x) = clients_set.lock().unwrap().get_mut(*dependency) {
+            if clients_set.lock().unwrap().contains_key(dependency) {
+                if let Some(x) = clients_set.lock().unwrap().get_mut(dependency) {
                     ready = x.is_ready();
                 }
             }
@@ -392,7 +448,7 @@ fn client_close_connection(client_id: &String, client_action: &JsonValue, tcp_st
         }
     }
 
-    if client_action == ACTION_POST_STREAM || client_action == ACTION_POST_RESTORE {
+    if client_action == ACTION_POST_STREAM || client_action == ACTION_POST_RESTORE || client_action == ACTION_POST_DUMP {
         clients_set.lock().unwrap().remove(client_id);
         info!("[{client_id}] [==] Client removed");
     }
