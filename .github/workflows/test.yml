@@ -1,0 +1,25 @@
+name: Test
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Install System Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -qqy protobuf-compiler libprotobuf-dev
+
+    - name: Setup Rust toolchain
+      uses: actions-rs/toolchain@v1
+      with:
+          toolchain: stable
+          override: true
+
+    - name: Run tests
+      run: make test
