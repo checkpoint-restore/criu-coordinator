@@ -69,6 +69,9 @@ lint-fix:  ## Automatically fix lint issues
 .PHONY: test
 test:  ## Run tests
 	$(CARGO) test
+.PHONY: e2e-test
+e2e-test:  ## Run end-to-end tests
+	$(CARGO) test -- --ignored --nocapture
 
 .PHONY: completions
 completions: $(NAME)  ## Generate shell completions

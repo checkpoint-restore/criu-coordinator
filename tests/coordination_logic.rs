@@ -1,11 +1,12 @@
 use std::{
-    net::{TcpListener, TcpStream},
     process::{Child, Command, Stdio},
     thread,
     time::Duration,
 };
 
 use criu_coordinator::constants::*;
+mod common;
+use common::*;
 
 
 #[derive(Clone, Copy)]
@@ -20,19 +21,6 @@ struct Step {
 struct Scenario {
     name:  &'static str,
     steps: Vec<Step>,
-}
-
-fn pick_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port()
-}
-
-fn spawn_server(port: u16) -> Child {
-    Command::new("target/debug/criu-coordinator")
-        .args(["server", "--address", "127.0.0.1", "--port", &port.to_string(), "--max-retries", "5"])
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .expect("spawn server")
 }
 
 fn spawn_client(step: Step, port: u16) -> Child {
@@ -51,15 +39,6 @@ fn spawn_client(step: Step, port: u16) -> Child {
         .expect("spawn client")
 }
 
-fn server_ready(addr: &str, retries: u32) -> bool {
-    for _ in 0..retries {
-        if TcpStream::connect(addr).is_ok() {
-            return true;
-        }
-        thread::sleep(Duration::from_millis(100));
-    }
-    false
-}
 
 fn assert_step(child: Child, step: Step, scenario: &str) {
     let out = child.wait_with_output().expect("wait client");
