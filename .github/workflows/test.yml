@@ -23,4 +23,7 @@ jobs:
           override: true
 
     - name: Run tests
-      run: sudo -E make test
+      run: make test
+
+    - name: Run end-to-end tests
+      run: sudo -E make test-e2e
