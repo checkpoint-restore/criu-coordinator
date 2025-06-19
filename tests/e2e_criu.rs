@@ -117,7 +117,7 @@ fn setup(port: u16) -> Vec<TestProcess> {
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .stdin(Stdio::null());
-        
+
         unsafe {
             command.pre_exec(|| {
                 // `setsid` should returns -1 on error.
@@ -163,7 +163,7 @@ fn cleanup(server: &mut Child, processes: &mut [TestProcess]) {
             let _ = child.wait();
             println!("Killed original process group for {} (PGID: {})", p.id, p.pid);
         }
-        
+
         if let Some(pid) = get_pid_by_name(&p.id) {
             unsafe {
                 libc::kill(pid as i32, libc::SIGKILL);
@@ -210,7 +210,7 @@ fn e2e_dump_and_restore_with_criu() {
     let processes = setup(port);
     let mut _guard = TestGuard { server, processes };
 
-    println!("\n--- Starting DUMP phase (concurrent) ---");
+    println!("\n--- Starting checkpoint phase (concurrent) ---");
     let mut dump_handles = vec![];
     for p in &_guard.processes {
         let coordinator_path_clone = coordinator_path.clone();
@@ -225,7 +225,7 @@ fn e2e_dump_and_restore_with_criu() {
                     &coordinator_path_clone,
                 ])
                 .output()
-                .expect("failed to execute criu dump");
+                .expect("failed to execute criu");
             (p_id, out)
         }));
     }
@@ -235,12 +235,12 @@ fn e2e_dump_and_restore_with_criu() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             output.status.success() && stderr.contains("Dumping finished successfully"),
-            "CRIU dump failed for process '{}'.\nStderr:\n{}", id, stderr
+            "CRIU failed for process '{}'.\nStderr:\n{}", id, stderr
         );
-        println!("Dump successful for {id}");
+        println!("Checkpoint successful for {id}");
     }
 
-    println!("\n--- REAPING dumped processes ---");
+    println!("\n--- REAPING checkpointed processes ---");
     for p in &mut _guard.processes {
         if let Some(mut child) = p.child.take() {
             // Wait for the original child process to be killed by CRIU.
@@ -254,7 +254,7 @@ fn e2e_dump_and_restore_with_criu() {
         }
     }
 
-    println!("\n--- Starting RESTORE phase (concurrent) ---");
+    println!("\n--- Starting restore phase (concurrent) ---");
     let mut restore_handles = vec![];
     for p in &_guard.processes {
         let coordinator_path_clone = coordinator_path.clone();

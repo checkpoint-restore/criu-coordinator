@@ -67,11 +67,11 @@ lint-fix:  ## Automatically fix lint issues
 	$(CARGO) clippy --fix --all-targets --all-features -- -D warnings
 
 .PHONY: test
-test:  ## Run tests
-	$(CARGO) test
-.PHONY: e2e-test
-e2e-test:  ## Run end-to-end tests
-	$(CARGO) test -- --ignored --nocapture
+test:  ## Run tests sequentially to avoid mixing the outputs of the tests
+	$(CARGO) test -- --test-threads=1
+
+test-e2e: ## Run e2e tests and require root privileges.
+	$(CARGO) test -- --test --test-threads=1 --ignored
 
 .PHONY: completions
 completions: $(NAME)  ## Generate shell completions

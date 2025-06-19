@@ -2,6 +2,8 @@ use std::{
     process::{Child, Command, Stdio},
     thread,
     time::Duration,
+    collections::HashMap,
+    sync::{Arc, Barrier},
 };
 
 use criu_coordinator::constants::*;
@@ -39,7 +41,6 @@ fn spawn_client(step: Step, port: u16) -> Child {
         .expect("spawn client")
 }
 
-
 fn assert_step(child: Child, step: Step, scenario: &str) {
     let out = child.wait_with_output().expect("wait client");
     let combined = String::from_utf8_lossy(&out.stdout).to_string()
@@ -63,33 +64,44 @@ fn run_test(s: Scenario) {
     let mut server = spawn_server(port);
     assert!(server_ready(&addr, 20), "server failed to start");
 
-    // Group by ID to keep pre and post phases together
-    use std::collections::HashMap;
-    let mut phases: HashMap<&str, Vec<Step>> = HashMap::new();
+    // Group steps by action to run them concurrently
+    let mut actions: HashMap<&str, Vec<Step>> = HashMap::new();
+    let mut action_order: Vec<&str> = Vec::new();
+
     for step in &s.steps {
-        phases.entry(step.id).or_default().push(*step);
+        if !actions.contains_key(step.action) {
+            action_order.push(step.action);
+        }
+        actions.entry(step.action).or_default().push(*step);
     }
 
-    let mut handles = vec![];
-    for (_id, steps) in phases {
-        let scenario = s.name;
-        handles.push(thread::spawn(move || {
-            for (i, step) in steps.iter().enumerate() {
-                // Wait a moment between dump and restore phases to allow the clients of the dump phase to finish
-                if step.action == ACTION_PRE_RESTORE && i > 0 && steps[i - 1].action == ACTION_POST_DUMP {
-                    thread::sleep(Duration::from_secs(1));
-                }
+    thread::scope(|scope| {
+        for action in action_order {
+            let steps_for_action = actions.get(action).unwrap();
+            let num_clients = steps_for_action.len();
+            let barrier = Arc::new(Barrier::new(num_clients));
+            let mut handles = vec![];
 
-                let child = spawn_client(*step, port);
-                assert_step(child, *step, scenario);
-                thread::sleep(Duration::from_millis(80));
+            println!("\n--- Running action: {action} ---\n");
+
+            for step in steps_for_action {
+                let barrier = Arc::clone(&barrier);
+                let scenario_name = s.name;
+                handles.push(scope.spawn(move || {
+                    barrier.wait(); // Synchronize start of all clients for this action
+                    let child = spawn_client(*step, port);
+                    assert_step(child, *step, scenario_name);
+                }));
             }
-        }));
-    }
 
-    for h in handles {
-        h.join().expect("client thread join failed");
-    }
+            for h in handles {
+                h.join().expect("client thread join failed");
+            }
+
+            // Give the server a moment to process before the next action
+            thread::sleep(Duration::from_millis(100));
+        }
+    });
 
     let _ = server.kill();
     let _ = server.wait();
@@ -99,7 +111,7 @@ fn run_test(s: Scenario) {
 #[test]
 fn dump_single_client() {
     run_test(Scenario {
-        name: "Dump single client",
+        name: "Checkpoint single client",
         steps: vec![
             Step { id: "A", deps: "", action: ACTION_PRE_DUMP,  expect: MESSAGE_ACK },
             Step { id: "A", deps: "", action: ACTION_POST_DUMP, expect: MESSAGE_ACK },
@@ -121,7 +133,7 @@ fn restore_single_client() {
 #[test]
 fn dump_single_client_with_nonexistent_dep() {
     run_test(Scenario {
-        name: "Dump single client with nonexistent dep",
+        name: "Checkpoint single client with nonexistent dep",
         steps: vec![
             Step { id: "A", deps: "B", action: ACTION_PRE_DUMP,  expect: MESSAGE_TIMEOUT },
         ],
@@ -141,7 +153,7 @@ fn restore_single_client_with_nonexistent_dep() {
 #[test]
 fn dump_two_interdependent_clients() {
     run_test(Scenario {
-        name: "Dump two interdependent clients",
+        name: "Checkpoint two interdependent clients",
         steps: vec![
             // pre-dump phase
             Step { id: "A", deps: "B", action: ACTION_PRE_DUMP,  expect: MESSAGE_ACK },
@@ -168,7 +180,7 @@ fn restore_two_interdependent_clients() {
 #[test]
 fn dump_three_interdependent_clients() {
     run_test(Scenario {
-        name: "Dump three interdependent clients",
+        name: "Checkpoint three interdependent clients",
         steps: vec![
             // pre-dump phase
             Step { id: "A", deps: "B:C", action: ACTION_PRE_DUMP,  expect: MESSAGE_ACK },
@@ -197,7 +209,7 @@ fn restore_three_interdependent_clients() {
 #[test]
 fn dump_and_restore_three_interdependent_clients() {
     run_test(Scenario {
-        name: "Dump and restore three interdependent clients",
+        name: "Checkpoint and restore three interdependent clients",
         steps: vec![
             // Pre-dump phase
             Step { id: "A", deps: "B:C", action: ACTION_PRE_DUMP,  expect: MESSAGE_ACK },
@@ -211,6 +223,36 @@ fn dump_and_restore_three_interdependent_clients() {
             Step { id: "A", deps: "B:C", action: ACTION_PRE_RESTORE,  expect: MESSAGE_ACK },
             Step { id: "B", deps: "A:C", action: ACTION_PRE_RESTORE,  expect: MESSAGE_ACK },
             Step { id: "C", deps: "A:B", action: ACTION_PRE_RESTORE,  expect: MESSAGE_ACK },
+        ],
+    });
+}
+
+#[test]
+fn dump_and_restore_client_server_with_network_hooks() {
+    run_test(Scenario {
+        name: "Checkpoint and restore a client-server with network hooks",
+        steps: vec![
+            // Checkpoint phase
+            Step { id: "A", deps: "B", action: ACTION_PRE_DUMP, expect: MESSAGE_ACK },
+            Step { id: "B", deps: "",  action: ACTION_PRE_DUMP, expect: MESSAGE_ACK },
+
+            Step { id: "A", deps: "B", action: ACTION_NETWORK_LOCK, expect: MESSAGE_ACK },
+            Step { id: "B", deps: "",  action: ACTION_NETWORK_LOCK, expect: MESSAGE_ACK },
+
+            Step { id: "A", deps: "B", action: ACTION_POST_DUMP, expect: MESSAGE_ACK },
+            Step { id: "B", deps: "",  action: ACTION_POST_DUMP, expect: MESSAGE_ACK },
+
+
+            // Restore phase
+            Step { id: "A", deps: "B", action: ACTION_PRE_RESTORE, expect: MESSAGE_ACK },
+            Step { id: "B", deps: "",  action: ACTION_PRE_RESTORE, expect: MESSAGE_ACK },
+
+            Step { id: "A", deps: "B", action: ACTION_NETWORK_UNLOCK, expect: MESSAGE_ACK },
+            Step { id: "B", deps: "",  action: ACTION_NETWORK_UNLOCK, expect: MESSAGE_ACK },
+
+            Step { id: "A", deps: "B", action: ACTION_POST_RESTORE, expect: MESSAGE_ACK },
+            Step { id: "B", deps: "",  action: ACTION_POST_RESTORE, expect: MESSAGE_ACK },
+
         ],
     });
 }
