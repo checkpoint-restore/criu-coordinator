@@ -187,16 +187,10 @@ fn cleanup(server: &mut Child, processes: &mut [TestProcess]) {
 
 
 #[test]
-#[ignore]
 fn e2e_dump_and_restore_with_criu() {
-    if !is_root() {
-        println!("SKIPPING TEST: This test must be run with root privileges for 'criu'.");
-        return;
-    }
-    if !is_criu_installed() {
-        println!("SKIPPING TEST: `criu` command not found in PATH.");
-        return;
-    }
+    assert!(is_root(), "This test must be run with root privileges for 'criu'.");
+
+    assert!(is_criu_installed(), "CRIU command not found in PATH");
 
     let coordinator_path = fs::canonicalize("target/debug/criu-coordinator")
         .expect("Could not find criu-coordinator binary. Run 'cargo build' first.")
