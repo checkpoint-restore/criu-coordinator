@@ -112,7 +112,7 @@ fn setup(port: u16) -> Vec<TestProcess> {
         // This is to prevent the PGID of the test runner from colliding with the PGID
         // that CRIU is trying to restore. `setsid` creates a new session
         // and sets the process group ID.
-        let mut command = Command::new(format!("./tests/{}", name));
+        let mut command = Command::new(format!("./tests/{name}"));
         command
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -139,9 +139,7 @@ fn setup(port: u16) -> Vec<TestProcess> {
             _dependencies: dependencies,
         });
         println!(
-            "Spawned '{}' with PID {}",
-            name,
-            pid,
+            "Spawned '{name}' with PID {pid}",
         );
     }
     thread::sleep(Duration::from_millis(500));
@@ -205,7 +203,7 @@ fn e2e_dump_and_restore_with_criu() {
         .to_owned();
 
     let port = pick_port();
-    let addr = format!("127.0.0.1:{}", port);
+    let addr = format!("127.0.0.1:{port}");
     let server = spawn_server(port);
     assert!(server_ready(&addr, 20), "Server failed to start at {}", addr);
 
@@ -239,7 +237,7 @@ fn e2e_dump_and_restore_with_criu() {
             output.status.success() && stderr.contains("Dumping finished successfully"),
             "CRIU dump failed for process '{}'.\nStderr:\n{}", id, stderr
         );
-        println!("Dump successful for {}", id);
+        println!("Dump successful for {id}");
     }
 
     println!("\n--- REAPING dumped processes ---");
@@ -282,7 +280,7 @@ fn e2e_dump_and_restore_with_criu() {
             output.status.success() && stderr.contains("Restore finished successfully"),
             "CRIU restore failed for process '{}'.\nStderr:\n{}", id, stderr
         );
-        println!("Restore successful for {}", id);
+        println!("Restore successful for {id}");
     }
 
     thread::sleep(Duration::from_millis(500));
