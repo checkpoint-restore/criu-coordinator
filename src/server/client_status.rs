@@ -22,6 +22,8 @@ pub struct ClientStatus {
     connected: bool,
     ready: bool,
     local_checkpoint: bool,
+    network_locked: bool,
+    network_unlocked: bool,
 }
 
 impl ClientStatus {
@@ -30,6 +32,8 @@ impl ClientStatus {
             connected: true,
             ready: false,
             local_checkpoint: false,
+            network_locked: false,
+            network_unlocked: false,
         }
     }
 
@@ -51,5 +55,21 @@ impl ClientStatus {
 
     pub fn has_local_checkpoint(&self) -> bool {
         self.local_checkpoint
+    }
+
+    pub fn is_network_locked(&self) -> bool {
+        self.network_locked
+    }
+
+    pub fn set_network_locked(&mut self) {
+        self.network_locked = true;
+    }
+
+    pub fn is_network_unlocked(&self) -> bool {
+        self.network_unlocked
+    }
+
+    pub fn set_network_unlocked(&mut self) {
+        self.network_unlocked = true;
     }
 }
