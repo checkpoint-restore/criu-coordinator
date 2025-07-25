@@ -326,7 +326,7 @@ fn e2e_dump_and_restore_with_criu() {
     let processes = setup(port);
     let mut _guard = TestGuard { server, processes };
 
-    println!("\n--- Starting DUMP phase (concurrent) ---");
+    println!("\n--- Starting DUMP phase ---");
     let mut dump_handles = vec![];
     for p in &_guard.processes {
         let coordinator_path_clone = coordinator_path.clone();
@@ -380,7 +380,7 @@ fn e2e_dump_and_restore_with_criu() {
     }
 
     thread::sleep(Duration::from_millis(500));
-    println!("\n--- Starting RESTORE phase (concurrent) ---");
+    println!("\n--- Starting RESTORE phase ---");
     let mut restore_handles = vec![];
     for p in &_guard.processes {
         let coordinator_path_clone = coordinator_path.clone();

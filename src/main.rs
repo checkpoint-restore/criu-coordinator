@@ -127,8 +127,10 @@ fn main() {
                     Err(_) => false
                 }
             },
-            ACTION_POST_DUMP => false,
             ACTION_PRE_RESTORE => false,
+            ACTION_POST_DUMP => false,
+            ACTION_NETWORK_LOCK => false,
+            ACTION_NETWORK_UNLOCK => false,
             _ => exit(0)
         };
 

@@ -146,7 +146,18 @@ impl Server {
             return;
         }
 
-        let mut response_message = self.get_response_message(&client_msg.id);
+        if client_msg.action == ACTION_NETWORK_LOCK {
+            self.handle_network_lock(&client_msg, &tcp_stream);
+            return;
+        }
+
+        if client_msg.action == ACTION_NETWORK_UNLOCK {
+            self.handle_network_unlock(&client_msg, &tcp_stream);
+            return;
+        }
+
+
+        let mut response_message = self.get_response_message(&client_msg);
 
         if response_message != MESSAGE_ACK {
             self.send_response(&client_msg.id, response_message, &tcp_stream);
@@ -260,6 +271,43 @@ impl Server {
         Some(client_msg)
     }
 
+    /// Generic function to wait for all dependencies to reach a certain state.
+    fn wait_for_dependencies_state<F>(&self, msg: &ClientMessage, check_state: F, state_name: &str) -> bool
+        where
+            F: Fn(&ClientStatus) -> bool,
+    {
+        info!("[{}] [==] Wait for all dependencies to be {}", msg.id, state_name);
+        for dependency in msg.dependencies.iter() {
+            if dependency.is_empty() {
+                continue;
+            }
+            info!(
+                "[{}] [==] Checking {} status of dependency: {}",
+                msg.id, state_name, dependency
+            );
+            let mut retry_count = self.max_retries;
+            loop {
+                let dependency_in_state = {
+                    let clients_lock = self.clients.lock().unwrap();
+                    clients_lock.get(dependency).is_some_and(&check_state)
+                };
+                if dependency_in_state {
+                    info!("[{}] [==] Dependency {} is {}", msg.id, dependency, state_name);
+                    break;
+                }
+                if retry_count > 0 {
+                    retry_count -= 1;
+                    thread::sleep(time::Duration::from_secs(1));
+                } else {
+                    error!("[{}] [!!] Timeout waiting for dependency {} to be {}", msg.id, dependency, state_name);
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+
     fn wait_for_dependencies_connection(&self, msg: &ClientMessage) -> bool {
         for dependency in msg.dependencies.iter() {
             if dependency.is_empty() {
@@ -300,45 +348,7 @@ impl Server {
     }
 
     fn wait_for_dependencies_readiness(&self, msg: &ClientMessage) -> bool {
-        info!("[{}] [==] Wait for all dependencies to be ready", msg.id);
-
-        for dependency in msg.dependencies.iter() {
-            if dependency.is_empty() {
-                continue;
-            }
-            info!(
-                "[{}] [==] Checking readiness of dependency: {}",
-                msg.id, dependency
-            );
-
-            let mut retry_count = self.max_retries;
-
-            loop {
-                // Acquire the lock to check the status of the dependency
-                let clients_lock = self.clients.lock().unwrap();
-                if let Some(status) = clients_lock.get(dependency) {
-                    if status.is_ready() {
-                        info!("[{}] [==] Dependency {} is ready", msg.id, dependency);
-                        break;
-                    }
-                }
-
-                // Release the lock before potentially sleeping
-                drop(clients_lock);
-
-                if retry_count > 0 {
-                    retry_count -= 1;
-                    thread::sleep(time::Duration::from_secs(1));
-                } else {
-                    error!(
-                        "[{}] [!!] Timeout waiting for dependency {} to be ready",
-                        msg.id, dependency
-                    );
-                    return false;
-                }
-            }
-        }
-        true
+        self.wait_for_dependencies_state(msg, |s| s.is_ready(), "ready")
     }
 
     /// Handle adding dependencies for kubesrc client
@@ -369,6 +379,54 @@ impl Server {
 
         // Respond with ACK
         self.send_response(&msg.id, MESSAGE_ACK, tcp_stream);
+        self.close_client_connection(msg, tcp_stream.clone());
+    }
+
+    /// Handle network-lock action
+    fn handle_network_lock(&self, msg: &ClientMessage, tcp_stream: &Arc<Mutex<TcpStream>>) {
+        let mut response_message = self.get_response_message(msg);
+        if response_message != MESSAGE_ACK {
+            self.send_response(&msg.id, response_message, tcp_stream);
+            self.close_client_connection(msg, tcp_stream.clone());
+            return;
+        }
+
+        if !self.wait_for_dependencies_connection(msg) {
+            response_message = MESSAGE_TIMEOUT;
+        }
+
+        if response_message != MESSAGE_ACK {
+            self.send_response(&msg.id, response_message, tcp_stream);
+            self.close_client_connection(msg, tcp_stream.clone());
+            return;
+        }
+
+        if let Some(x) = self.clients.lock().unwrap().get_mut(&msg.id) {
+            info!("[{}] [==] Client network is locked", msg.id);
+            x.set_network_locked();
+        }
+
+        if !self.wait_for_dependencies_state(msg, |s| s.is_network_locked(), "network locked") {
+            response_message = MESSAGE_TIMEOUT;
+        }
+
+        self.send_response(&msg.id, response_message, tcp_stream);
+        self.close_client_connection(msg, tcp_stream.clone());
+    }
+
+
+    fn handle_network_unlock(&self, msg: &ClientMessage, tcp_stream: &Arc<Mutex<TcpStream>>) {
+        if let Some(x) = self.clients.lock().unwrap().get_mut(&msg.id) {
+            info!("[{}] [==] Client network is unlocked", msg.id);
+            x.set_network_unlocked();
+        }
+
+        let mut response_message = MESSAGE_ACK;
+        if !self.wait_for_dependencies_state(msg, |s| s.is_network_unlocked(), "network unlocked") {
+            response_message = MESSAGE_TIMEOUT;
+        }
+
+        self.send_response(&msg.id, response_message, tcp_stream);
         self.close_client_connection(msg, tcp_stream.clone());
     }
 
@@ -546,17 +604,31 @@ impl Server {
         }
     }
 
-    fn get_response_message(&self, client_id: &str) -> &'static str {
+    fn get_response_message(&self, client_msg: &ClientMessage) -> &'static str {
         let mut clients_lock = self.clients.lock().unwrap();
 
-        if clients_lock.is_empty() || !clients_lock.contains_key(client_id) {
-            info!("[{client_id}] [==] Insert client ID");
-            clients_lock.insert(client_id.to_string(), ClientStatus::new());
+        let action = &client_msg.action;
+        if action == ACTION_PRE_DUMP || action == ACTION_PRE_RESTORE {
+            // These actions start a new operation. Reset or insert the client state.
+            info!("[{}] [==] Starting new operation '{}', (re)setting state.", client_msg.id, action);
+            clients_lock.insert(client_msg.id.clone(), ClientStatus::new());
             return MESSAGE_ACK;
         }
 
-        MESSAGE_ALREADY_CONNECTED
+        // For other action, the client must already be known.
+        if let Some(status) = clients_lock.get(&client_msg.id) {
+            // Check for re-entrant actions that are not allowed.
+            if action == ACTION_NETWORK_LOCK && status.is_network_locked() {
+                 return MESSAGE_ALREADY_CONNECTED;
+            }
+            // Add other state checks for other actions if needed
+        } else {
+            return MESSAGE_NOT_CONNECTED;
+        }
+
+        MESSAGE_ACK
     }
+
 
     fn send_response(
         &self,
@@ -586,7 +658,7 @@ impl Server {
 
         if msg.action == ACTION_POST_STREAM
             || msg.action == ACTION_POST_RESTORE
-            || msg.action == ACTION_POST_DUMP
+           ||  msg.action == ACTION_POST_DUMP
         {
             self.clients.lock().unwrap().remove(&msg.id);
             info!("[{}] [==] Client removed", msg.id);
