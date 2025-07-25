@@ -74,7 +74,7 @@ fn detach_terminal() -> io::Result<()> {
 /// Change working directory to root
 fn change_working_dir() -> io::Result<()> {
     if let Err(err) = std::env::set_current_dir("/") {
-        error!("Error changing working directory: {}", err);
+        error!("Error changing working directory: {err}");
         exit(1);
     }
     Ok(())
@@ -102,7 +102,7 @@ fn close_std_file_descriptors() -> io::Result<()> {
 fn send_message(tcp_stream: &mut TcpStream, message: &str) {
     info!("Sending message: {message}");
     if let Err(e) = tcp_stream.write_all(message.as_bytes()) {
-        error!("Failed to send message: {}", e);
+        error!("Failed to send message: {e}");
     }
 }
 
@@ -117,13 +117,13 @@ fn receive_response(tcp_stream: &mut TcpStream, expected_message: &str) {
 
     match response {
         Ok(response_str) => {
-            info!("Server responded with: {}", response_str);
+            info!("Server responded with: {response_str}");
             if response_str != expected_message {
                 exit(1);
             }
         }
         Err(e) => {
-            error!("Failed to receive response: {}", e);
+            error!("Failed to receive response: {e}");
         }
     }
 }
@@ -167,7 +167,7 @@ fn run_streamer(tcp_stream: &mut TcpStream, images_dir: &Path) -> io::Result<()>
 
                         let file_fd = openat(images_dir.as_raw_fd(), filename.as_bytes(), OFlag::O_RDWR | OFlag::O_CREAT, Mode::S_IRUSR | Mode::S_IWUSR)?;
                         let output_file = fs::File::new(file_fd)?;
-                        info!("Request: {}", filename);
+                        info!("Request: {filename}");
 
                         let pipe = criu_connection.recv_pipe()?;
                         let image_file = ImageFile::new(filename, pipe, output_file);
@@ -222,7 +222,7 @@ fn run_streamer(tcp_stream: &mut TcpStream, images_dir: &Path) -> io::Result<()>
         let mut to_write = image_size[img_name] as usize;
         while to_write > 0 {
             let bytes_sent = sendfile(tcp_stream.as_raw_fd(), img_file.as_raw_fd(), Some(&mut offset), to_write)?;
-            info!("bytes_sent: {}", bytes_sent);
+            info!("bytes_sent: {bytes_sent}");
             to_write -= bytes_sent;
         }
 

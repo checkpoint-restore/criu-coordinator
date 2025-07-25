@@ -84,7 +84,7 @@ impl Server {
         let listener =
             TcpListener::bind(listener_address).expect("Failed to bind server to address");
 
-        info!("[==] Server listening on {}", server_address);
+        info!("[==] Server listening on {server_address}");
 
         // Start accepting incoming connections and spawn a new thread to handle each connection.
         for stream in listener.incoming() {
@@ -101,7 +101,7 @@ impl Server {
                     });
                 }
                 Err(e) => {
-                    error!("[!!] Failed to accept a connection: {}", e);
+                    error!("[!!] Failed to accept a connection: {e}");
                 }
             }
         }
@@ -204,17 +204,17 @@ impl Server {
                 Ok(text) => match json::parse(text) {
                     Ok(data) => data,
                     Err(e) => {
-                        error!("[!!] Invalid JSON received: {}", e);
+                        error!("[!!] Invalid JSON received: {e}");
                         return None;
                     }
                 },
                 Err(e) => {
-                    error!("[!!] Invalid UTF-8 received: {}", e);
+                    error!("[!!] Invalid UTF-8 received: {e}");
                     return None;
                 }
             },
             Err(e) => {
-                error!("[!!] Failed to read from client: {}", e);
+                error!("[!!] Failed to read from client: {e}");
                 return None;
             }
         };
@@ -231,7 +231,7 @@ impl Server {
             if dependencies_json.is_object() {
                 dependency_map = dependencies_json.clone();
             } else {
-                error!("[{}] [!!] Expected 'dependencies' to be an object for kubescr add_dependencies action", client_id);
+                error!("[{client_id}] [!!] Expected 'dependencies' to be an object for kubescr add_dependencies action");
                 return None;
             }
         } else {
@@ -358,9 +358,9 @@ impl Server {
             }
 
             // Print debug information
-            print!("key: {} => ", key);
+            print!("key: {key} => ");
             for dependency in dependencies_vector.iter() {
-                print!("{}, ", dependency);
+                print!("{dependency}, ");
             }
             println!();
 
@@ -550,7 +550,7 @@ impl Server {
         let mut clients_lock = self.clients.lock().unwrap();
 
         if clients_lock.is_empty() || !clients_lock.contains_key(client_id) {
-            info!("[{}] [==] Insert client ID", client_id);
+            info!("[{client_id}] [==] Insert client ID");
             clients_lock.insert(client_id.to_string(), ClientStatus::new());
             return MESSAGE_ACK;
         }
@@ -564,7 +564,7 @@ impl Server {
         response_message: &str,
         tcp_stream: &Arc<Mutex<TcpStream>>,
     ) {
-        info!("[{}] [<<] Sending {}", client_id, response_message);
+        info!("[{client_id}] [<<] Sending {response_message}");
         tcp_stream
             .lock()
             .unwrap()

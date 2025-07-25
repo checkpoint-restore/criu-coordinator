@@ -31,12 +31,12 @@ use crate::pipeline::streamer::streamer;
 const BUFFER_SIZE: usize = 32768 * 4;
 
 pub fn run_client(address: &str, port: u16, id: &str, deps: &str, action: &str, images_dir: &Path, enable_streaming: bool) {
-    let server_address = format!("{}:{}", address, port);
+    let server_address = format!("{address}:{port}");
 
-    info!("Connecting to {} using action {}", server_address, action);
+    info!("Connecting to {server_address} using action {action}");
     match TcpStream::connect(&server_address) {
         Ok(mut tcp_stream) => {
-            info!("Connected to server at {}", server_address);
+            info!("Connected to server at {server_address}");
 
             let cmd = object!{
                 id: id,
@@ -45,7 +45,7 @@ pub fn run_client(address: &str, port: u16, id: &str, deps: &str, action: &str, 
             };
 
             if let Err(e) = tcp_stream.write_all(cmd.dump().as_bytes()) {
-                error!("Failed to send ID: {}", e);
+                error!("Failed to send ID: {e}");
                 return;
             }
 
@@ -57,13 +57,13 @@ pub fn run_client(address: &str, port: u16, id: &str, deps: &str, action: &str, 
 
             match response {
                 Ok(response_str) => {
-                    info!("Server responded with: {}", response_str);
+                    info!("Server responded with: {response_str}");
                     if response_str != MESSAGE_ACK {
                         exit(1);
                     }
                 }
                 Err(e) => {
-                    error!("Failed to receive response: {}", e);
+                    error!("Failed to receive response: {e}");
                 }
             }
 
@@ -72,11 +72,11 @@ pub fn run_client(address: &str, port: u16, id: &str, deps: &str, action: &str, 
             }
 
             if let Err(e) = tcp_stream.shutdown(Shutdown::Both) {
-                error!("Failed to shutdown TCP connection: {}", e);
+                error!("Failed to shutdown TCP connection: {e}");
             }
         }
         Err(e) => {
-            error!("Failed to connect to the server: {}", e);
+            error!("Failed to connect to the server: {e}");
         }
     }
 }

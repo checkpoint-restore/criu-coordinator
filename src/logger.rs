@@ -55,7 +55,7 @@ impl log::Log for Logger {
         if self.enabled(record.metadata()) {
             if self.log_file.is_some() {
                 if let Err(error) = writeln!(self.log_file.as_ref().unwrap(), "{} - {}", record.level(), record.args()) {
-                    eprintln!("Error writing to log file: {}", error);
+                    eprintln!("Error writing to log file: {error}");
                 }
             } else {
                 println!("{} - {}", record.level(), record.args());
