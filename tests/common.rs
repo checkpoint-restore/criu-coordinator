@@ -41,3 +41,21 @@ pub fn spawn_server(port: u16) -> Child {
         .spawn()
         .expect("Failed to spawn criu-coordinator server. Did you run `cargo build`?")
 }
+
+#[allow(dead_code)]
+pub fn is_root() -> bool {
+    let output = Command::new("id")
+        .arg("-u")
+        .output()
+        .expect("Failed to run `id -u` to check for root user.");
+    String::from_utf8_lossy(&output.stdout).trim() == "0"
+}
+
+#[allow(dead_code)]
+pub fn is_criu_installed() -> bool {
+    Command::new("criu")
+        .arg("--version")
+        .output()
+        .map(|out| out.status.success())
+        .unwrap_or(false)
+}
