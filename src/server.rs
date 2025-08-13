@@ -43,7 +43,7 @@ const DEFAULT_IMAGES_DIR: &str = "/tmp/server-images";
 pub struct Server {
     pub address: String,
     pub port: u16,
-    pub max_retries: u16,
+    pub wait_timeout: u16,
     pub images_directory: String,
     pub clients: Arc<Mutex<HashMap<String, ClientStatus>>>,
     pub container_dependencies: Arc<Mutex<HashMap<String, Vec<String>>>>,
@@ -58,18 +58,18 @@ struct ClientMessage {
 }
 
 /// Start CRIU coordinator server
-pub fn run_server(address: &str, port: u16, max_retries: u16) {
-    let mut server = Server::new(address, port, max_retries);
+pub fn run_server(address: &str, port: u16, wait_timeout: u16) {
+    let mut server = Server::new(address, port, wait_timeout);
     server.run();
 }
 
 impl Server {
     // Create a new instance of the Server struct.
-    pub fn new(address: &str, port: u16, max_retries: u16) -> Self {
+    pub fn new(address: &str, port: u16, wait_timeout: u16) -> Self {
         Self {
             address: address.to_string(),
             port,
-            max_retries,
+            wait_timeout,
             images_directory: DEFAULT_IMAGES_DIR.to_string(),
             clients: Arc::new(Mutex::new(HashMap::new())),
             container_dependencies: Arc::new(Mutex::new(HashMap::new())),
@@ -282,7 +282,7 @@ impl Server {
             }
             info!("[{}] [==] Checking {} status of dependency: {}", msg.id, state_name, dependency);
 
-            let mut retry_count = self.max_retries;
+            let mut retry_count = self.wait_timeout;
             loop {
                 let dependency_in_state = {
                     let clients_lock = self.clients.lock().unwrap();
@@ -317,7 +317,7 @@ impl Server {
                 msg.id, dependency
             );
 
-            let mut retry_count = self.max_retries;
+            let mut retry_count = self.wait_timeout;
 
             loop {
                 // Acquire the lock to check the status of the dependency
@@ -462,7 +462,7 @@ impl Server {
                     msg.id, dependency
                 );
 
-                let mut retry_count = self.max_retries;
+                let mut retry_count = self.wait_timeout;
 
                 loop {
                     let dependency_completed = {

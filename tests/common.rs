@@ -33,7 +33,7 @@ pub fn spawn_server(port: u16) -> Child {
             "127.0.0.1",
             "--port",
             &port.to_string(),
-            "--max-retries",
+            "--wait-timeout",
             "5",
         ])
         .stdout(Stdio::inherit())
