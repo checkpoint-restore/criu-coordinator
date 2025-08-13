@@ -161,9 +161,9 @@ fn main() {
             init_logger(Some(&PathBuf::from(&images_dir)), log_file);
             run_client(&address, port, &id, &deps, &action, &PathBuf::from(images_dir), stream);
         },
-        Mode::Server { address, port , max_retries, log_file} => {
+        Mode::Server { address, port , wait_timeout, log_file} => {
             init_logger(None, log_file);
-            run_server(&address, port, max_retries);
+            run_server(&address, port, wait_timeout);
         }
     };
 }
