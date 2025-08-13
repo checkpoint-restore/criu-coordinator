@@ -25,6 +25,7 @@ pub const ACTION_NETWORK_LOCK: &str = "network-lock";
 pub const ACTION_NETWORK_UNLOCK: &str = "network-unlock";
 pub const ACTION_PRE_STREAM: &str = "pre-stream";
 pub const ACTION_POST_STREAM: &str = "post-stream";
+pub const ACTION_POST_RESUME: &str = "post-resume";
 pub const ACTION_ADD_DEPENDENCIES: &str = "add-dependencies";
 
 /// ENV_ACTION specifies the CRIU hook that is currently being used.
