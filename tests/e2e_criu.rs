@@ -76,10 +76,9 @@ fn setup(port: u16) -> Vec<TestProcess> {
     let mut processes = vec![];
     let p_names = ["loop-1", "loop-2", "loop-3"];
 
-    for (i, name) in p_names.iter().enumerate() {
-        let image_dir = env::current_dir()
-            .unwrap()
-            .join(format!("tests/c{}", i + 1));
+    for name in p_names.iter() {
+        let image_dir =
+            env::temp_dir().join(format!("criu-e2e-test-{}-{}", name, std::process::id()));
         let _ = fs::remove_dir_all(&image_dir);
         fs::create_dir_all(&image_dir).expect("Failed to create image directory");
 
@@ -197,7 +196,11 @@ fn setup_tcp_test(coordinator_port: u16, tcp_server_port: u16) -> Vec<TestProces
 
     // Setup for TCP Server
     let server_id = "tcp-server";
-    let server_image_dir = env::current_dir().unwrap().join("tests/tcp-server-images");
+    let server_image_dir = env::temp_dir().join(format!(
+        "criu-e2e-test-{}-{}",
+        server_id,
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&server_image_dir);
     fs::create_dir_all(&server_image_dir).expect("Failed to create server image directory");
 
@@ -250,7 +253,11 @@ fn setup_tcp_test(coordinator_port: u16, tcp_server_port: u16) -> Vec<TestProces
 
     // Setup for TCP Client
     let client_id = "tcp-client";
-    let client_image_dir = env::current_dir().unwrap().join("tests/tcp-client-images");
+    let client_image_dir = env::temp_dir().join(format!(
+        "criu-e2e-test-{}-{}",
+        client_id,
+        std::process::id()
+    ));
     let _ = fs::remove_dir_all(&client_image_dir);
     fs::create_dir_all(&client_image_dir).expect("Failed to create client image directory");
 
