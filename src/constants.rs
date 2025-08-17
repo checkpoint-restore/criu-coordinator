@@ -32,6 +32,8 @@ pub const ACTION_ADD_DEPENDENCIES: &str = "add-dependencies";
 pub const ENV_ACTION: &str = "CRTOOLS_SCRIPT_ACTION";
 /// ENV_IMAGE_DIR specifies path as used a base directory for CRIU images.
 pub const ENV_IMAGE_DIR: &str = "CRTOOLS_IMAGE_DIR";
+/// ENV_INIT_PID specifies the PID of the process to be checkpointed by CRIU.
+pub const ENV_INIT_PID: &str = "CRTOOLS_INIT_PID";
 
 /// Unix socket used for "criu dump".
 pub const IMG_STREAMER_CAPTURE_SOCKET_NAME: &str = "streamer-capture.sock";
