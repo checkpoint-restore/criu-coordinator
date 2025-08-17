@@ -25,6 +25,7 @@ mod pipeline;
 mod logger;
 
 use constants::*;
+
 use std::{env, path::PathBuf, process::exit, fs, os::unix::prelude::FileTypeExt};
 
 use clap::{CommandFactory, Parser};
@@ -36,15 +37,19 @@ use client::run_client;
 use server::run_server;
 use logger::init_logger;
 
-use crate::client::load_config_file;
+use crate::client::{load_config_file, is_dump_action, is_restore_action};
+
 
 fn main() {
     if let Ok(action) = env::var(ENV_ACTION) {
+        if !is_dump_action(&action) && !is_restore_action(&action) {
+            exit(0)
+        }
 
         let images_dir = PathBuf::from(env::var(ENV_IMAGE_DIR)
             .unwrap_or_else(|_| panic!("Missing {} environment variable", ENV_IMAGE_DIR)));
 
-        let client_config = load_config_file(&images_dir);
+        let client_config = load_config_file(&images_dir, &action);
 
         // Ignore all action hooks other than "pre-stream", "pre-dump" and "pre-restore".
         let enable_streaming = match action.as_str() {
@@ -61,11 +66,7 @@ fn main() {
                     Err(_) => false
                 }
             },
-            ACTION_PRE_RESTORE => false,
-            ACTION_POST_DUMP => false,
-            ACTION_NETWORK_LOCK => false,
-            ACTION_NETWORK_UNLOCK => false,
-            _ => exit(0)
+            _ => false,
         };
 
         init_logger(Some(&images_dir), client_config.get_log_file().to_string());
