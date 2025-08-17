@@ -586,7 +586,7 @@ fn e2e_dump_and_restore_tcp_client_server() {
         println!("Restore successful for {id}");
     }
 
-    thread::sleep(Duration::from_millis(500));
+    thread::sleep(Duration::from_secs(2));
     println!("\n--- Verifying connection and processes after restore ---");
 
     let new_server_pid =
