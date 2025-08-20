@@ -47,23 +47,6 @@ pub fn get_pid_by_name(name: &str) -> Option<u32> {
         .ok()
 }
 
-pub fn is_root() -> bool {
-    let output = Command::new("id")
-        .arg("-u")
-        .output()
-        .expect("Failed to run `id -u` to check for root user.");
-    String::from_utf8_lossy(&output.stdout).trim() == "0"
-}
-
-pub fn is_criu_installed() -> bool {
-    Command::new("criu")
-        .arg("--version")
-        .output()
-        .map(|out| out.status.success())
-        .unwrap_or(false)
-}
-
-
 fn setup(port: u16) -> Vec<TestProcess> {
     println!("Setting up test environment");
 
