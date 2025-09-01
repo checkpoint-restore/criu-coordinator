@@ -36,7 +36,7 @@ impl Logger {
         if filename == "-" {
             self.log_file = None;
         } else {
-            match OpenOptions::new().write(true).create(true).truncate(true).mode(0o600).open(filename) {
+            match OpenOptions::new().create(true).append(true).mode(0o600).open(filename) {
                     Ok(file) => {
                         self.log_file = Some(file);
                     }
