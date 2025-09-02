@@ -12,15 +12,31 @@ jobs:
 
     - name: Install System Dependencies
       run: |
-        sudo add-apt-repository ppa:criu/ppa
+        sudo add-apt-repository -y ppa:criu/ppa
         sudo apt-get update
-        sudo apt-get install -qqy protobuf-compiler libprotobuf-dev criu
+        sudo apt-get install -qqy protobuf-compiler libprotobuf-dev criu wget
+
+    - name: Install Podman
+      run: |
+        wget https://github.com/containers/podman/releases/download/v5.5.2/podman-remote-static-linux_amd64.tar.gz
+        tar -xvf podman-remote-static-linux_amd64.tar.gz
+        mv bin/podman-remote-static-linux_amd64 podman
+        sudo mv podman /usr/local/bin/
+        sudo chmod +x /usr/local/bin/podman
+
+    - name: Install crun
+      run: |
+        sudo rm -f /usr/bin/crun
+        wget https://github.com/containers/crun/releases/download/1.23.1/crun-1.23.1-linux-amd64
+        sudo install -m 0755 crun-1.23.1-linux-amd64 /usr/bin/crun
+
 
     - name: Setup Rust toolchain
       uses: actions-rs/toolchain@v1
       with:
           toolchain: stable
           override: true
+          components: clippy
 
     - name: Run tests
       run: make test

@@ -12,11 +12,14 @@ static void serve_new_conn(int sk)
     printf("New connection\n");
     while (1) {
         sleep(1);
-        if ((write(sk, &counter, sizeof(counter))) <= 0) {
-            perror("Can't write socket");
-            return;
-        }
-        counter++;
+		if ((write(sk, &counter, sizeof(counter))) > 0) {
+			printf("Server -> Client: %d\n", counter);
+			fflush(stdout);
+			counter++;
+		} else {
+			perror("SERVER_ERROR: Can't write socket");
+			return;
+		}
     }
 }
 

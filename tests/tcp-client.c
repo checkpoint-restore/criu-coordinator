@@ -13,6 +13,7 @@ static int main_cl(int argc, char **argv)
 
     sk = socket(PF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (sk < 0) {
+        perror("Can't create socket");
         return -1;
     }
 
@@ -22,24 +23,32 @@ static int main_cl(int argc, char **argv)
     addr.sin_family = AF_INET;
 
     if ((inet_aton(argv[1], &addr.sin_addr)) < 0) {
+        perror("Can't resolve server address");
         return -1;
     }
 
     addr.sin_port = htons(port);
     if ((connect(sk, (struct sockaddr *)&addr, sizeof(addr))) < 0) {
+        perror("Can't connect to server");
         return -1;
     }
 
     printf("Connected to %s:%d ...\n", argv[1], port);
+    fflush(stdout);
 
-    while (1) {
-        gettimeofday(&t0, NULL);
-        while (read(sk, &rval, sizeof(rval)) == 0)
-            sleep(0.0001);
-        gettimeofday(&t1, NULL);
-        printf("%f ms\n", (float)((t1.tv_sec - t0.tv_sec) * 1000.0 + (t1.tv_usec - t0.tv_usec) / 1000.0));
-    }
-    return -1;
+	while (1) {
+		if (read(sk, &rval, sizeof(rval)) > 0) {
+			printf("Client <- Server: %d\n", rval);
+			fflush(stdout);
+		} else {
+			fprintf(stderr, "CLIENT_ERROR: Failed to read from socket.\n");
+            fflush(stderr);
+			perror("read");
+			break;
+		}
+	}
+	close(sk);
+	return -1;
 }
 
 
