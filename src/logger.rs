@@ -19,12 +19,13 @@
 
 use std::fs::{File, self, OpenOptions};
 use std::os::unix::fs::OpenOptionsExt;
+use std::sync::Mutex;
 use std::io::Write;
 use std::path::Path;
 use log::{Level, Metadata, Record, LevelFilter};
 
 pub struct Logger {
-    log_file: Option<File>,
+    log_file: Option<Mutex<File>>,
 }
 
 impl Logger {
@@ -38,7 +39,7 @@ impl Logger {
         } else {
             match OpenOptions::new().create(true).append(true).mode(0o600).open(filename) {
                     Ok(file) => {
-                        self.log_file = Some(file);
+                        self.log_file = Some(file.into());
                     }
                     Err(error) => panic!("Opening log file: {:?}", error)
                 }
@@ -53,15 +54,18 @@ impl log::Log for Logger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-            if self.log_file.is_some() {
-                if let Err(error) = writeln!(self.log_file.as_ref().unwrap(), "{} - {}", record.level(), record.args()) {
-                    eprintln!("Error writing to log file: {error}");
+            if let Some(log_file) = &self.log_file {
+                if let Ok(mut file) = log_file.lock() {
+                    if let Err(error) = writeln!(file, "{} - {}", record.level(), record.args()) {
+                        eprintln!("Error writing to log file: {error}");
+                    }
                 }
             } else {
                 println!("{} - {}", record.level(), record.args());
             }
         }
     }
+
     fn flush(&self) {}
 }
 
