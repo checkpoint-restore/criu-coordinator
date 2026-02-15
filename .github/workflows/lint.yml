@@ -14,12 +14,8 @@ jobs:
         sudo apt-get update
         sudo apt-get install -qqy protobuf-compiler libprotobuf-dev
 
-    - name: Setup Rust
-      uses: actions-rs/toolchain@v1
-      with:
-          toolchain: stable
-          override: true
-          components: clippy
+    - name: Setup Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
 
     - name: Run lint
       run: make lint

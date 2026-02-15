@@ -17,10 +17,7 @@ jobs:
         sudo apt-get install -qqy protobuf-compiler libprotobuf-dev criu
 
     - name: Setup Rust toolchain
-      uses: actions-rs/toolchain@v1
-      with:
-          toolchain: stable
-          override: true
+      uses: dtolnay/rust-toolchain@stable
 
     - name: Run tests
       run: make test
