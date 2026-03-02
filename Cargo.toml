@@ -14,7 +14,7 @@ clap_complete = "4.1.5"
 log = { version = "0.4", features = ["std"] }
 json = "*"
 libc = "0.2"
-nix = "0.26.2"
+nix = "0.31.2"
 slab = "0.4.8"
 lazy_static = "1.4.0"
 serde = "1.0.159"
