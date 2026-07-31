@@ -49,7 +49,10 @@ fn main() {
         let images_dir = PathBuf::from(env::var(ENV_IMAGE_DIR)
             .unwrap_or_else(|_| panic!("Missing {} environment variable", ENV_IMAGE_DIR)));
 
-        let client_config = load_config_file(&images_dir, &action);
+        let client_config = match load_config_file(&images_dir, &action) {
+            Some(config) => config,
+            None => exit(0),
+        };
 
         // Ignore all action hooks other than "pre-stream", "pre-dump" and "pre-restore".
         let enable_streaming = match action.as_str() {
