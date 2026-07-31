@@ -81,8 +81,27 @@ const CONFIG_KEY_ADDR: &str = "address";
 const CONFIG_KEY_PORT: &str = "port";
 const CONFIG_KEY_LOG: &str = "log-file";
 
-pub fn load_config_file<P: AsRef<Path>>(images_dir: P, action: &str) -> ClientConfig {
-    let images_dir = images_dir.as_ref();
+/// Load action-hook configuration, or return `None` when this process does not
+/// participate in coordinated checkpoint/restore.
+pub fn load_config_file<P: AsRef<Path>>(images_dir: P, action: &str) -> Option<ClientConfig> {
+    let global_config_file = PathBuf::from("/etc/criu").join(Path::new(CONFIG_FILE));
+    load_config_file_with(
+        images_dir.as_ref(),
+        action,
+        &global_config_file,
+        discover_process_id,
+    )
+}
+
+fn load_config_file_with<F>(
+    images_dir: &Path,
+    action: &str,
+    global_config_file: &Path,
+    discover_id: F,
+) -> Option<ClientConfig>
+where
+    F: FnOnce() -> String,
+{
     let local_config_file = images_dir.join(Path::new(CONFIG_FILE));
 
     // Handle per-process configuration workflow
@@ -98,13 +117,20 @@ pub fn load_config_file<P: AsRef<Path>>(images_dir: P, action: &str) -> ClientCo
         let settings = Config::builder().add_source(config::File::from(local_config_file)).build().unwrap();
         let settings_map = settings.try_deserialize::<HashMap<String, String>>().unwrap();
 
-        return ClientConfig::new(
+        return Some(ClientConfig::new(
             settings_map.get(CONFIG_KEY_LOG).cloned().unwrap_or_else(|| "-".to_string()),
             settings_map.get(CONFIG_KEY_ADDR).cloned().unwrap_or_else(|| DEFAULT_ADDRESS.to_string()),
             settings_map.get(CONFIG_KEY_PORT).cloned().unwrap_or_else(|| DEFAULT_PORT.to_string()),
             settings_map.get(CONFIG_KEY_ID).unwrap().clone(),
             settings_map.get(CONFIG_KEY_DEPS).cloned().unwrap_or_default(),
-        );
+        ));
+    }
+
+    // A restore without per-checkpoint configuration belongs to a process that
+    // did not participate in coordination during dump. The global configuration
+    // may still be installed, so its presence cannot determine participation.
+    if is_restore_action(action) {
+        return None;
     }
 
     // The following allows us to load global config files from /etc/criu.
@@ -122,13 +148,11 @@ pub fn load_config_file<P: AsRef<Path>>(images_dir: P, action: &str) -> ClientCo
     //    }
     // }
     // Where dependencies is a map of IDs (e.g: container IDs) to a list of dependencies.
-    let global_config_file = PathBuf::from("/etc/criu").join(Path::new(CONFIG_FILE));
-
     if !global_config_file.is_file() {
-        panic!("Global config file {:?} is not found", global_config_file);
+        return None;
     }
 
-    let global_settings = Config::builder().add_source(config::File::from(global_config_file)).build().unwrap();
+    let global_settings = Config::builder().add_source(config::File::from(global_config_file.to_path_buf())).build().unwrap();
     let global_map = global_settings.try_deserialize::<HashMap<String, config::Value>>().unwrap();
 
     let address = global_map.get(CONFIG_KEY_ADDR).map(|v| v.clone().into_string().unwrap()).unwrap_or_else(|| DEFAULT_ADDRESS.to_string());
@@ -136,11 +160,6 @@ pub fn load_config_file<P: AsRef<Path>>(images_dir: P, action: &str) -> ClientCo
     let log_file = global_map.get(CONFIG_KEY_LOG).map(|v| v.clone().into_string().unwrap()).unwrap_or_else(|| "-".to_string());
 
     if is_dump_action(action) {
-        let pid_str = env::var(ENV_INIT_PID)
-            .unwrap_or_else(|_| panic!("{} not set", ENV_INIT_PID));
-        let pid: u32 = pid_str.parse().expect("Invalid PID");
-
-
         let deps_map: HashMap<String, Vec<String>> = global_map
             .get(CONFIG_KEY_DEPS)
             .unwrap_or_else(|| panic!("'{}' map is missing in global config", CONFIG_KEY_DEPS))
@@ -149,52 +168,54 @@ pub fn load_config_file<P: AsRef<Path>>(images_dir: P, action: &str) -> ClientCo
                 let deps = v.into_array().unwrap().into_iter().map(|val| val.into_string().unwrap()).collect();
                 (k, deps)
             }).collect();
-        
-        // We first try to find a container ID.
-        let id = match find_container_id_from_pid(pid) {
-            Ok(container_id) => container_id,
+
+        let id = discover_id();
+
+        let dependencies = match find_dependencies_in_global_config(&deps_map, &id) {
+            Ok(deps) => deps,
             Err(_) => {
-                // If the PID is not in a container cgroup, we consider it a regular process.
-                // We identify it by its process name from /proc/<pid>/comm.
-                let process_name_path = format!("/proc/{pid}/comm");
-                if let Ok(name) = fs::read_to_string(process_name_path) {
-                    name.trim().to_string()
-                } else {
-                    // Fallback to using the PID as the ID if comm is unreadable
-                    pid.to_string()
-                }
+                // Container not found in dependency config — not participating
+                // in coordinated checkpoint.
+                return None;
             }
         };
-
-        let dependencies = find_dependencies_in_global_config(&deps_map, &id).unwrap();
 
         // Write the local config for each container during dump
         if action == ACTION_PRE_DUMP || action == ACTION_PRE_STREAM {
             write_checkpoint_config(images_dir, &id, &dependencies);
         }
 
-        ClientConfig::new(
+        Some(ClientConfig::new(
             log_file,
             address,
             port,
             id,
             dependencies,
-        )
-    } else { // Restore action
-        if !local_config_file.is_file() {
-            panic!("Restore action initiated, but no {CONFIG_FILE} found in the image directory {:?}", images_dir);
+        ))
+    } else {
+        None
+    }
+}
+
+fn discover_process_id() -> String {
+    let pid_str = env::var(ENV_INIT_PID)
+        .unwrap_or_else(|_| panic!("{} not set", ENV_INIT_PID));
+    let pid: u32 = pid_str.parse().expect("Invalid PID");
+
+    // We first try to find a container ID.
+    match find_container_id_from_pid(pid) {
+        Ok(container_id) => container_id,
+        Err(_) => {
+            // If the PID is not in a container cgroup, we consider it a regular process.
+            // We identify it by its process name from /proc/<pid>/comm.
+            let process_name_path = format!("/proc/{pid}/comm");
+            if let Ok(name) = fs::read_to_string(process_name_path) {
+                name.trim().to_string()
+            } else {
+                // Fallback to using the PID as the ID if comm is unreadable
+                pid.to_string()
+            }
         }
-
-        let local_settings = Config::builder().add_source(config::File::from(local_config_file)).build().unwrap();
-        let local_map = local_settings.try_deserialize::<HashMap<String, String>>().unwrap();
-
-        ClientConfig::new(
-            log_file,
-            address,
-            port,
-            local_map.get(CONFIG_KEY_ID).unwrap().clone(),
-            local_map.get(CONFIG_KEY_DEPS).cloned().unwrap_or_default(),
-        )
     }
 }
 
