@@ -219,6 +219,132 @@ fn discover_process_id() -> String {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::{tempdir, TempDir};
+
+    fn test_paths() -> (TempDir, PathBuf, PathBuf) {
+        let test_dir = tempdir().unwrap();
+        let images_dir = test_dir.path().join("images");
+        fs::create_dir(&images_dir).unwrap();
+        let global_config_file = test_dir.path().join("global.json");
+        (test_dir, images_dir, global_config_file)
+    }
+
+    fn write_global_config(path: &Path, dependencies: &str) {
+        let config = format!(
+            r#"{{
+                "address": "192.0.2.1",
+                "port": "4242",
+                "log-file": "global.log",
+                "dependencies": {dependencies}
+            }}"#
+        );
+        fs::write(path, config).unwrap();
+    }
+
+    #[test]
+    fn restore_without_local_config_skips_coordination_when_global_config_exists() {
+        let (_test_dir, images_dir, global_config_file) = test_paths();
+        write_global_config(&global_config_file, r#"{"listed": []}"#);
+
+        let config = load_config_file_with(
+            &images_dir,
+            ACTION_PRE_RESTORE,
+            &global_config_file,
+            || panic!("restore must not rediscover an ID"),
+        );
+
+        assert!(config.is_none());
+    }
+
+    #[test]
+    fn restore_with_local_config_participates() {
+        let (_test_dir, images_dir, global_config_file) = test_paths();
+        write_global_config(&global_config_file, r#"{"global": []}"#);
+        fs::write(
+            images_dir.join(CONFIG_FILE),
+            r#"{
+                "id": "local",
+                "dependencies": "peer",
+                "address": "192.0.2.2",
+                "port": "4343",
+                "log-file": "local.log"
+            }"#,
+        )
+        .unwrap();
+
+        let config = load_config_file_with(
+            &images_dir,
+            ACTION_PRE_RESTORE,
+            &global_config_file,
+            || panic!("restore must not rediscover an ID"),
+        )
+        .unwrap();
+
+        assert_eq!(config.get_id(), "local");
+        assert_eq!(config.get_dependencies(), "peer");
+        assert_eq!(config.get_address(), "192.0.2.2");
+        assert_eq!(config.get_port(), "4343");
+        assert_eq!(config.get_log_file(), "local.log");
+    }
+
+    #[test]
+    fn dump_without_global_config_skips_coordination() {
+        let (_test_dir, images_dir, global_config_file) = test_paths();
+
+        let config = load_config_file_with(
+            &images_dir,
+            ACTION_PRE_DUMP,
+            &global_config_file,
+            || panic!("a missing global config must not require an ID"),
+        );
+
+        assert!(config.is_none());
+    }
+
+    #[test]
+    fn dump_for_unlisted_process_skips_coordination() {
+        let (_test_dir, images_dir, global_config_file) = test_paths();
+        write_global_config(&global_config_file, r#"{"listed": []}"#);
+
+        let config = load_config_file_with(
+            &images_dir,
+            ACTION_PRE_DUMP,
+            &global_config_file,
+            || "unlisted".to_string(),
+        );
+
+        assert!(config.is_none());
+        assert!(!images_dir.join(CONFIG_FILE).exists());
+    }
+
+    #[test]
+    fn dump_for_listed_process_writes_local_config() {
+        let (_test_dir, images_dir, global_config_file) = test_paths();
+        write_global_config(
+            &global_config_file,
+            r#"{"container": ["peer-a", "peer-b"]}"#,
+        );
+
+        let config = load_config_file_with(
+            &images_dir,
+            ACTION_PRE_DUMP,
+            &global_config_file,
+            || "container-123".to_string(),
+        )
+        .unwrap();
+
+        assert_eq!(config.get_id(), "container-123");
+        assert_eq!(config.get_dependencies(), "peer-a:peer-b");
+        assert_eq!(config.get_address(), "192.0.2.1");
+        assert_eq!(config.get_port(), "4242");
+        assert_eq!(config.get_log_file(), "global.log");
+        assert!(images_dir.join(CONFIG_FILE).is_file());
+    }
+}
+
  /// Find containers dependencies by matching the discovered ID as a prefix of a key in the map
 fn find_dependencies_in_global_config(
     deps_map: &HashMap<String, Vec<String>>,
